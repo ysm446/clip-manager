@@ -70,16 +70,18 @@ class MainWindow(QMainWindow):
         self._filter_panel.download_here_requested.connect(self._open_download_dialog)
         self._filter_panel.library_changed.connect(self._update_library_status)
 
-        right_split = QSplitter(Qt.Orientation.Vertical)
-        right_split.addWidget(self._player)
-        right_split.addWidget(self._details)
-        right_split.setStretchFactor(0, 3)
-        right_split.setStretchFactor(1, 2)
-        right_split.setSizes([520, 300])
+        self._right_split = QSplitter(Qt.Orientation.Vertical)
+        self._right_split.addWidget(self._player)
+        self._right_split.addWidget(self._details)
+        self._right_split.setStretchFactor(0, 3)
+        self._right_split.setStretchFactor(1, 2)
+        self._right_split.setSizes([520, 300])
+        self._details_sizes = [520, 300]         # 展開時のサイズ（折りたたみ時に復元）
+        self._details.toggled.connect(self._on_details_toggled)
 
         library_split = QSplitter(Qt.Orientation.Horizontal)
         library_split.addWidget(self._filter_panel)
-        library_split.addWidget(right_split)
+        library_split.addWidget(self._right_split)
         library_split.setStretchFactor(0, 0)
         library_split.setStretchFactor(1, 1)
         library_split.setSizes([320, 960])
@@ -294,6 +296,18 @@ class MainWindow(QMainWindow):
         self._on_log(f"[Library] Enrich finished: {updated} clip(s) updated.")
         self._filter_panel.rebuild()
         self._update_library_status()
+
+    @Slot(bool)
+    def _on_details_toggled(self, expanded: bool) -> None:
+        """詳細の開閉に合わせてプレイヤー/詳細の高さ配分を変える。"""
+        sizes = self._right_split.sizes()
+        if expanded:
+            self._right_split.setSizes(self._details_sizes)
+        else:
+            if sizes[1] > 60:                    # 折りたたみ前のサイズを覚えておく
+                self._details_sizes = sizes
+            header = self._details.sizeHint().height()
+            self._right_split.setSizes([sizes[0] + sizes[1] - header, header])
 
     @Slot(int)
     def _show_details(self, clip_id: int) -> None:

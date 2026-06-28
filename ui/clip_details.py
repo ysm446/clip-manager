@@ -3,40 +3,65 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QFormLayout,
     QLabel,
     QScrollArea,
+    QToolButton,
 )
 
 from ui.library_view import fmt_duration, fmt_size, fmt_resolution
 
 
 class ClipDetailsPanel(QWidget):
-    """1 クリップのメタデータ（サムネイル・解像度・コーデック・タグ等）を表示。"""
+    """1 クリップのメタデータ（解像度・コーデック・タグ等）を表示。折りたたみ可能。"""
+
+    toggled = Signal(bool)   # 展開状態（True=展開）が変わった
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._library = None
+        self._expanded = True
         self._init_ui()
 
     def set_library(self, library) -> None:
         self._library = library
         self.clear()
 
+    def is_expanded(self) -> bool:
+        return self._expanded
+
     def _init_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(8)
+        outer.setSpacing(6)
 
+        # --- ヘッダー（常時表示）: 折りたたみボタン＋タイトル ---
+        header = QHBoxLayout()
+        self._toggle = QToolButton()
+        self._toggle.setText("Details")
+        self._toggle.setAutoRaise(True)
+        self._toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._toggle.setToolTip("詳細を開閉（プレイヤーを広く使えます）")
+        self._toggle.clicked.connect(self._toggle_body)
+        header.addWidget(self._toggle)
         self._title = QLabel("No clip selected")
         self._title.setWordWrap(True)
         self._title.setStyleSheet("font-weight: bold; font-size: 13px;")
         self._title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        outer.addWidget(self._title)
+        header.addWidget(self._title, stretch=1)
+        outer.addLayout(header)
+
+        # --- 本体（折りたたみ対象） ---
+        self._body = QWidget()
+        body_layout = QVBoxLayout(self._body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._body, stretch=1)
 
         # メタ情報（スクロール可能）
         form_host = QWidget()
@@ -58,7 +83,21 @@ class ClipDetailsPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(form_host)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        outer.addWidget(scroll, stretch=1)
+        body_layout.addWidget(scroll, stretch=1)
+
+    # ------------------------------------------------------------------
+
+    def _toggle_body(self) -> None:
+        self._expanded = not self._expanded
+        self._body.setVisible(self._expanded)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if self._expanded else Qt.ArrowType.RightArrow
+        )
+        self.toggled.emit(self._expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        if expanded != self._expanded:
+            self._toggle_body()
 
     # ------------------------------------------------------------------
 

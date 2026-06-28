@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QLabel,
     QComboBox,
+    QStyle,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -29,6 +30,22 @@ def _fmt_ms(ms: int) -> str:
     h, rem = divmod(s, 3600)
     m, sec = divmod(rem, 60)
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+class _ClickSlider(QSlider):
+    """溝（groove）をクリックすると、その位置へジャンプする水平スライダー。"""
+
+    def _value_for_x(self, x: float) -> int:
+        return QStyle.sliderValueFromPosition(
+            self.minimum(), self.maximum(), int(x), self.width()
+        )
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.maximum() > self.minimum():
+            value = self._value_for_x(event.position().x())
+            self.setValue(value)
+            self.sliderMoved.emit(value)   # 即シーク（player が setPosition）
+        super().mousePressEvent(event)     # 続けてドラッグできるようにする
 
 
 class _VideoArea(QVideoWidget):
@@ -106,7 +123,7 @@ class PlayerWidget(QWidget):
         seek_row = QHBoxLayout()
         self._pos_label = QLabel("0:00")
         self._pos_label.setStyleSheet("font-size: 11px;")
-        self._seek = QSlider(Qt.Orientation.Horizontal)
+        self._seek = _ClickSlider(Qt.Orientation.Horizontal)
         self._seek.setRange(0, 0)
         self._seek.sliderMoved.connect(self._on_seek_moved)
         self._dur_label = QLabel("0:00")
@@ -135,7 +152,7 @@ class PlayerWidget(QWidget):
 
         ctl.addSpacing(12)
         ctl.addWidget(QLabel("Vol:"))
-        self._volume = QSlider(Qt.Orientation.Horizontal)
+        self._volume = _ClickSlider(Qt.Orientation.Horizontal)
         self._volume.setRange(0, 100)
         self._volume.setValue(80)
         self._volume.setFixedWidth(100)
