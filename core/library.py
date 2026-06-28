@@ -113,6 +113,60 @@ class Library:
                 progress_cb(processed, path)
         return added
 
+    # ------------------------------------------------------------------
+    # 実フォルダ（ディスク上のディレクトリ）
+    # ------------------------------------------------------------------
+
+    def list_dirs(self) -> list[str]:
+        """ルート配下の実ディレクトリ（ルート相対 POSIX）一覧。`.clipmanager` 除外。"""
+        meta = self.meta_dir.resolve()
+        dirs: list[str] = []
+        for p in self.root.rglob("*"):
+            if not p.is_dir():
+                continue
+            rp = p.resolve()
+            if rp == meta or meta in rp.parents:
+                continue
+            dirs.append(self.to_rel(p))
+        return sorted(dirs)
+
+    def make_dir(self, parent_rel: str | None, name: str) -> str:
+        """親フォルダ（ルート相対、None ならルート直下）に新フォルダを作る。"""
+        name = name.strip()
+        if not name or any(c in name for c in '\\/:*?"<>|'):
+            raise ValueError("フォルダ名に使用できない文字が含まれています。")
+        parent = self.root if not parent_rel else self.to_abs(parent_rel)
+        new_dir = parent / name
+        if new_dir.exists():
+            raise FileExistsError(f"同名のフォルダが既に存在します: {name}")
+        new_dir.mkdir(parents=True)
+        return self.to_rel(new_dir)
+
+    def rename_dir(self, db: LibraryDatabase, old_rel: str, new_name: str) -> str:
+        """実フォルダを改名し、配下クリップの rel_path / subtitle_path を追従させる。"""
+        new_name = new_name.strip()
+        if not new_name or any(c in new_name for c in '\\/:*?"<>|'):
+            raise ValueError("フォルダ名に使用できない文字が含まれています。")
+        old_abs = self.to_abs(old_rel)
+        if not old_abs.is_dir():
+            raise FileNotFoundError("フォルダが見つかりません。")
+        new_abs = old_abs.with_name(new_name)
+        if new_abs.exists():
+            raise FileExistsError(f"同名のフォルダが既に存在します: {new_name}")
+        old_abs.rename(new_abs)
+
+        old_prefix = old_rel.rstrip("/") + "/"
+        new_rel = self.to_rel(new_abs)
+        new_prefix = new_rel + "/"
+        for clip in db.list_clips():
+            if clip.rel_path.startswith(old_prefix):
+                db.update_clip_path(clip.id, new_prefix + clip.rel_path[len(old_prefix):])
+            if clip.subtitle_path and clip.subtitle_path.startswith(old_prefix):
+                db.update_subtitle_path(
+                    clip.id, new_prefix + clip.subtitle_path[len(old_prefix):]
+                )
+        return new_rel
+
     def register_download(self, db: LibraryDatabase, payload: dict) -> int | None:
         """ダウンロード完了ペイロードをライブラリへ登録し clip id を返す。
 

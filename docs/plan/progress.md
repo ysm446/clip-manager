@@ -4,13 +4,38 @@
 
 ## 現在地（サマリ）
 
-- **フェーズ**: Phase 4 完了。次は Phase 5（アプリ内プレイヤー）。
-- **状態**: クリップの右クリックから リネーム / 移動 / 複製 / 削除 を実装。実ファイル・
-  字幕サイドカー・DB を一括更新。削除は既定でゴミ箱（Send2Trash）。
-- **UI 像（恒久）**: 最終的に ~1920×1080 で 階層／サムネイル／動画再生 を一画面に
-  （plan.md「UI レイアウト像」参照）。右ペインのプレイヤーは Phase 5。
+- **フェーズ**: Phase 4.5（DLキュー＋実フォルダ階層）完了。次は Phase 5
+  （アプリ内プレイヤー）。
+- **状態**: 階層を**実フォルダ**へ再設計（タグは横断分類で継続）。フォルダ右クリック
+  「ここにダウンロード」→ポップアップ→**順次キュー**→**Queue タブ**で進捗管理。
+  完了ファイルはそのフォルダに保存され自動登録。
+- **UI 像（恒久）**: 最終的に ~1920×1080 で 階層／サムネイル／動画再生 を一画面に。
 
 ## 完了済み
+
+- 2026-06-28: **Phase 4.5 完了（DLキュー＋実フォルダ階層への再設計）**。
+  - 設計判断: フォルダ階層は**実ディスクのディレクトリ**を主軸に、横断分類は**タグ**。
+    DB は再スキャンで再構築できる索引。論理フォルダ（folders/folder_id）は UI から
+    外した（スキーマは互換で残置）。
+  - `core/library.py`: `list_dirs`/`make_dir`/`rename_dir`（実フォルダ操作。改名は
+    配下クリップの rel_path/subtitle_path を追従）。
+  - `core/database.py`: `list_clips` に `folder_path`（rel 前方一致、サブフォルダ含む）
+    フィルタを追加。
+  - `core/download_queue.py`: 順次処理の `DownloadQueue` ＋ `DownloadRequest`。
+    `worker_factory` 注入でテスト可能。
+  - `ui/download_dialog.py`: 「ここにダウンロード」ポップアップ（URL＋形式、保存先表示）。
+  - `ui/queue_view.py`: キュー一覧（状態・進捗バー・キャンセル・完了クリア）。
+  - `ui/filter_panel.py`: 実フォルダツリー＋タグ。右クリックに「Download here/New
+    subfolder/Rename/Open in Explorer」。`filter_changed` は `folder_path` を渡す。
+  - `ui/library_view.py`: フィルタを `folder_path` に。論理フォルダのサブメニューを撤去。
+  - `ui/main_window.py`: **Download タブを廃止し Queue タブに置換**。DLキュー・
+    ダウンロードポップアップ・登録を配線。Library メニューに「Download to library
+    root」。
+  - 検証: Phase 4.5 テスト（list_dirs/make_dir/rename_dir、folder_path フィルタ、
+    フェイクワーカーで順次キュー2件→正しいフォルダへ保存・登録）と MainWindow
+    スモーク、既存（backend/phase2/phase4/config）が全通過。
+  - 補足: 旧ビルドで**レジストリに実ライブラリ "Youtube"（C:\sample files\Youtube）**
+    が登録されている。現行は `data/` を読むため未参照。必要なら移行する。
 
 - 2026-06-28: **Phase 4 完了**。
   - `core/library.py`: `rename_clip` / `move_clip` / `duplicate_clip` /

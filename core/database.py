@@ -211,6 +211,7 @@ class LibraryDatabase:
         self,
         *,
         folder_id: int | None = None,
+        folder_path: str | None = None,
         tag_id: int | None = None,
         search: str | None = None,
         include_missing: bool = True,
@@ -226,6 +227,13 @@ class LibraryDatabase:
         if folder_id is not None:
             where.append("c.folder_id = ?")
             params.append(folder_id)
+        if folder_path:
+            # 実フォルダ（ルート相対 POSIX）配下のクリップ＝rel_path の前方一致。
+            # 配下のサブフォルダも含む。LIKE のワイルドカードはエスケープする。
+            prefix = folder_path.rstrip("/")
+            escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            where.append("c.rel_path LIKE ? ESCAPE '\\'")
+            params.append(f"{escaped}/%")
         if search:
             where.append("c.title LIKE ?")
             params.append(f"%{search}%")

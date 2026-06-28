@@ -74,7 +74,7 @@ class LibraryView(QWidget):
         super().__init__(parent)
         self._library = None
         self._db = None
-        self._filter = {"folder_id": None, "tag_id": None, "missing_only": False}
+        self._filter = {"folder_path": None, "tag_id": None, "missing_only": False}
         self._by_id: dict = {}   # clip id -> Clip（現在表示中）
         self._init_ui()
 
@@ -163,12 +163,12 @@ class LibraryView(QWidget):
     def set_library(self, library, db) -> None:
         self._library = library
         self._db = db
-        self._filter = {"folder_id": None, "tag_id": None, "missing_only": False}
+        self._filter = {"folder_path": None, "tag_id": None, "missing_only": False}
         self.refresh()
 
-    def set_filter(self, folder_id=None, tag_id=None, missing_only=False) -> None:
+    def set_filter(self, folder_path=None, tag_id=None, missing_only=False) -> None:
         self._filter = {
-            "folder_id": folder_id, "tag_id": tag_id, "missing_only": missing_only,
+            "folder_path": folder_path, "tag_id": tag_id, "missing_only": missing_only,
         }
         self.refresh()
 
@@ -181,7 +181,7 @@ class LibraryView(QWidget):
             return
         search = self._search.text().strip() or None
         clips = self._db.list_clips(
-            folder_id=self._filter["folder_id"],
+            folder_path=self._filter["folder_path"],
             tag_id=self._filter["tag_id"],
             missing_only=self._filter["missing_only"],
             search=search,
@@ -281,21 +281,6 @@ class LibraryView(QWidget):
         )
         menu.addSeparator()
 
-        # Move to folder ▸
-        folder_menu = menu.addMenu("Move to folder")
-        clip = self._by_id.get(clip_id)
-        none_act = folder_menu.addAction("(None)")
-        none_act.setCheckable(True)
-        none_act.setChecked(clip is not None and clip.folder_id is None)
-        none_act.triggered.connect(lambda: self._set_folder(clip_id, None))
-        for folder in self._db.list_folders():
-            act = folder_menu.addAction(folder.name)
-            act.setCheckable(True)
-            act.setChecked(clip is not None and clip.folder_id == folder.id)
-            act.triggered.connect(
-                lambda _checked=False, fid=folder.id: self._set_folder(clip_id, fid)
-            )
-
         # Tags ▸ (checkable)
         tags = self._db.list_tags()
         tag_menu = menu.addMenu("Tags")
@@ -375,10 +360,6 @@ class LibraryView(QWidget):
         if self._file_op(lambda: self._library.delete_clip(self._db, clip_id, to_trash=True)):
             self.refresh()
             self.library_modified.emit()
-
-    def _set_folder(self, clip_id, folder_id) -> None:
-        self._db.set_clip_folder(clip_id, folder_id)
-        self.refresh()
 
     def _toggle_tag(self, clip_id, tag_id, checked) -> None:
         if checked:

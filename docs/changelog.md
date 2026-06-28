@@ -2,6 +2,19 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 4.5: DLキュー＋実フォルダ階層へ再設計）
+
+- 階層を**実フォルダ**主軸に再設計（横断分類はタグ）。論理フォルダは UI から撤去
+  （スキーマ互換のため残置）。
+- `core/library.py`: `list_dirs`/`make_dir`/`rename_dir`。
+- `core/database.py`: `list_clips` に `folder_path`（前方一致）フィルタ。
+- `core/download_queue.py`: 順次処理 `DownloadQueue` ＋ `DownloadRequest`。
+- `ui/download_dialog.py`: 「ここにダウンロード」ポップアップ。
+- `ui/queue_view.py`: キュー一覧（状態/進捗/キャンセル）。
+- `ui/filter_panel.py`: 実フォルダツリー＋タグ、右クリックに Download here ほか。
+- `ui/main_window.py`: Download タブ → **Queue タブ**に置換。DLキュー連携。
+- Phase 4.5/既存テスト全通過。
+
 ## 2026-06-28（Phase 4: ファイル操作）
 
 - `core/library.py`: `rename_clip`/`move_clip`/`duplicate_clip`/`delete_clip` を追加。

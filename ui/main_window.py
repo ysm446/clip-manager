@@ -1,18 +1,12 @@
 from __future__ import annotations
+from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
-    QLineEdit,
-    QPushButton,
-    QComboBox,
-    QCheckBox,
-    QProgressBar,
     QPlainTextEdit,
     QLabel,
     QFileDialog,
-    QStatusBar,
     QInputDialog,
     QMessageBox,
     QTabWidget,
@@ -20,15 +14,17 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Slot, QUrl
 from PySide6.QtGui import QDesktopServices
-from core.downloader import DownloadWorker, is_audio_format, SAVE_FORMATS
 from core.settings import AppSettings
 from core.libraries import LibraryManager
 from core.library import Library
 from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
 from core.enrich_worker import EnrichWorker
+from core.download_queue import DownloadQueue, DownloadRequest
 from ui.library_view import LibraryView
 from ui.filter_panel import FilterPanel
+from ui.queue_view import QueueView
+from ui.download_dialog import DownloadDialog
 from ui.settings_dialog import SettingsDialog
 
 
@@ -36,13 +32,15 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._settings = AppSettings()
-        self._worker: DownloadWorker | None = None
         # --- Library state ---
         self._libraries = LibraryManager()
         self._active_lib: Library | None = None
         self._db: LibraryDatabase | None = None  # main-thread connection
         self._scan_worker: ScanWorker | None = None
         self._enrich_worker: EnrichWorker | None = None
+        # --- Download queue ---
+        self._queue = DownloadQueue()
+        self._queue.download_succeeded.connect(self._on_download_succeeded)
         self._init_ui()
         self._load_active_library()
         self._restore_geometry()
@@ -56,101 +54,7 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
 
-        # --- Download tab ---
-        download_tab = QWidget()
-        layout = QVBoxLayout(download_tab)
-        layout.setSpacing(10)
-        layout.setContentsMargins(16, 16, 16, 16)
-
-        # --- URL row ---
-        url_row = QHBoxLayout()
-        url_label = QLabel("URL:")
-        url_label.setFixedWidth(50)
-        self._url_edit = QLineEdit()
-        self._url_edit.setPlaceholderText("Paste YouTube URL here...")
-        self._url_edit.returnPressed.connect(self._start_download)
-        url_row.addWidget(url_label)
-        url_row.addWidget(self._url_edit)
-        layout.addLayout(url_row)
-
-        # --- Quality / Codec / Subtitle row ---
-        opt_row = QHBoxLayout()
-        opt_row.addWidget(QLabel("Format:"))
-        self._format_combo = QComboBox()
-        self._format_combo.addItems(list(SAVE_FORMATS))
-        self._format_combo.setCurrentText(self._settings.save_format)
-        self._format_combo.currentTextChanged.connect(self._on_format_changed)
-        opt_row.addWidget(self._format_combo)
-
-        opt_row.addSpacing(16)
-        opt_row.addWidget(QLabel("Quality:"))
-        self._quality_combo = QComboBox()
-        self._quality_combo.addItems(["144p", "240p", "360p", "480p", "720p", "1080p", "best"])
-        self._quality_combo.setCurrentText(self._settings.default_quality)
-        opt_row.addWidget(self._quality_combo)
-
-        opt_row.addSpacing(16)
-        opt_row.addWidget(QLabel("Codec:"))
-        self._codec_combo = QComboBox()
-        self._codec_combo.addItems(["H.264", "VP9", "AV1"])
-        self._codec_combo.setCurrentText(self._settings.default_codec)
-        opt_row.addWidget(self._codec_combo)
-
-        opt_row.addSpacing(16)
-        self._subtitle_check = QCheckBox("Download English subtitles (.srt)")
-        self._subtitle_check.setChecked(self._settings.write_subtitles)
-        opt_row.addWidget(self._subtitle_check)
-        opt_row.addStretch()
-        layout.addLayout(opt_row)
-
-        # --- Save-to row ---
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(QLabel("Save to:"))
-        self._folder_label = QLabel(self._settings.output_dir)
-        self._folder_label.setStyleSheet("color: gray; font-size: 11px;")
-        folder_row.addWidget(self._folder_label, stretch=1)
-        change_btn = QPushButton("Change folder...")
-        change_btn.setFixedWidth(130)
-        change_btn.clicked.connect(self._choose_folder)
-        folder_row.addWidget(change_btn)
-        layout.addLayout(folder_row)
-
-        # --- Download / Cancel buttons ---
-        btn_row = QHBoxLayout()
-        self._download_btn = QPushButton("Download")
-        self._download_btn.setFixedHeight(36)
-        self._download_btn.clicked.connect(self._start_download)
-        self._cancel_btn = QPushButton("Cancel")
-        self._cancel_btn.setFixedHeight(36)
-        self._cancel_btn.setEnabled(False)
-        self._cancel_btn.clicked.connect(self._cancel_download)
-        btn_row.addWidget(self._download_btn)
-        btn_row.addWidget(self._cancel_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # --- Progress bar ---
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        layout.addWidget(self._progress_bar)
-
-        # --- Status line below progress bar ---
-        self._status_label = QLabel("")
-        self._status_label.setStyleSheet("font-size: 11px; color: gray;")
-        layout.addWidget(self._status_label)
-
-        # --- Log area ---
-        layout.addWidget(QLabel("Log:"))
-        self._log = QPlainTextEdit()
-        self._log.setReadOnly(True)
-        self._log.setMaximumBlockCount(500)
-        self._log.setMinimumHeight(160)
-        layout.addWidget(self._log)
-
-        self._tabs.addTab(download_tab, "Download")
-
-        # --- Library tab: [ filter tree | clip list ] ---
+        # --- Library tab: [ folder/tag tree | clip list ] ---
         self._filter_panel = FilterPanel()
         self._library_view = LibraryView()
         self._library_view.play_requested.connect(self._play_clip)
@@ -159,6 +63,8 @@ class MainWindow(QMainWindow):
         self._library_view.library_modified.connect(self._update_library_status)
         self._filter_panel.filter_changed.connect(self._on_filter_changed)
         self._filter_panel.library_changed.connect(self._library_view.refresh)
+        self._filter_panel.download_here_requested.connect(self._open_download_dialog)
+        self._filter_panel.open_folder_requested.connect(self._open_folder)
 
         library_split = QSplitter(Qt.Orientation.Horizontal)
         library_split.addWidget(self._filter_panel)
@@ -168,13 +74,26 @@ class MainWindow(QMainWindow):
         library_split.setSizes([260, 1100])
         self._tabs.addTab(library_split, "Library")
 
+        # --- Queue tab: [ queue table | log ] ---
+        queue_tab = QWidget()
+        qlayout = QVBoxLayout(queue_tab)
+        qlayout.setContentsMargins(0, 0, 0, 0)
+        self._queue_view = QueueView()
+        self._queue_view.set_queue(self._queue)
+        qlayout.addWidget(self._queue_view, stretch=1)
+        qlayout.addWidget(QLabel("Log:"))
+        self._log = QPlainTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setMaximumBlockCount(500)
+        self._log.setFixedHeight(140)
+        qlayout.addWidget(self._log)
+        self._tabs.addTab(queue_tab, "Queue")
+
         # --- Menu bar ---
         file_menu = self.menuBar().addMenu("File")
-        settings_action = file_menu.addAction("Settings...")
-        settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction("Settings...").triggered.connect(self._open_settings)
         file_menu.addSeparator()
-        quit_action = file_menu.addAction("Quit")
-        quit_action.triggered.connect(self.close)
+        file_menu.addAction("Quit").triggered.connect(self.close)
 
         library_menu = self.menuBar().addMenu("Library")
         library_menu.addAction("Open / Create Library...").triggered.connect(
@@ -184,108 +103,71 @@ class MainWindow(QMainWindow):
             self._switch_library
         )
         library_menu.addSeparator()
-        library_menu.addAction("Rescan Library").triggered.connect(
-            self._rescan_library
+        library_menu.addAction("Download to library root...").triggered.connect(
+            self._download_to_root
         )
+        library_menu.addAction("Rescan Library").triggered.connect(self._rescan_library)
 
-        # --- Status bar ---
         self.statusBar().showMessage("Ready")
 
-        # Grey out quality/codec when an audio-only format is selected
-        self._on_format_changed(self._format_combo.currentText())
-
     # ------------------------------------------------------------------
-    # Slots
+    # Download (queue)
     # ------------------------------------------------------------------
-
-    @Slot()
-    def _start_download(self) -> None:
-        url = self._url_edit.text().strip()
-        if not url:
-            self.statusBar().showMessage("Please enter a URL.")
-            return
-        if self._worker and self._worker.isRunning():
-            return
-
-        self._set_downloading(True)
-        self._progress_bar.setValue(0)
-        self._log.clear()
-        self._status_label.setText("")
-
-        self._worker = DownloadWorker(
-            url=url,
-            output_dir=self._download_output_dir(),
-            quality=self._quality_combo.currentText(),
-            codec=self._codec_combo.currentText(),
-            write_subtitles=self._subtitle_check.isChecked(),
-            save_format=self._format_combo.currentText(),
-        )
-        self._worker.progress_updated.connect(self._on_progress)
-        self._worker.log_message.connect(self._on_log)
-        self._worker.download_succeeded.connect(self._on_download_succeeded)
-        self._worker.download_finished.connect(self._on_finished)
-        self._worker.start()
-        self.statusBar().showMessage("Downloading...")
-
-    def _download_output_dir(self) -> str:
-        """Active library root if set (so clips land inside and auto-register),
-        otherwise the configured default download folder."""
-        if self._active_lib is not None:
-            return str(self._active_lib.root)
-        return self._settings.output_dir
 
     @Slot(str)
-    def _on_format_changed(self, fmt: str) -> None:
-        # Audio-only formats ignore the video quality/codec selections.
-        audio = is_audio_format(fmt)
-        self._quality_combo.setEnabled(not audio)
-        self._codec_combo.setEnabled(not audio)
+    def _open_download_dialog(self, dest_dir: str) -> None:
+        """「ここにダウンロード」: ポップアップを開き、キューに積む。"""
+        if self._active_lib is None:
+            QMessageBox.information(self, "No library", "Open a library first.")
+            return
+        dlg = DownloadDialog(self._settings, dest_dir, self)
+        if not dlg.exec():
+            return
+        v = dlg.values()
+        req = DownloadRequest(
+            url=v["url"], dest_dir=v["dest_dir"], quality=v["quality"],
+            codec=v["codec"], write_subtitles=v["write_subtitles"],
+            save_format=v["save_format"],
+        )
+        self._queue.add(req)
+        self._on_log(f"[Queue] Added: {req.url}  →  {req.dest_dir}")
+        self._tabs.setCurrentWidget(self._tabs.widget(1))  # Queue タブへ
 
     @Slot()
-    def _cancel_download(self) -> None:
-        if self._worker:
-            self._worker.cancel()
-            self._cancel_btn.setEnabled(False)
-            self.statusBar().showMessage("Cancelling...")
+    def _download_to_root(self) -> None:
+        if self._active_lib is None:
+            QMessageBox.information(self, "No library", "Open a library first.")
+            return
+        self._open_download_dialog(str(self._active_lib.root))
 
-    @Slot(float, str)
-    def _on_progress(self, percent: float, status: str) -> None:
-        self._progress_bar.setValue(int(percent))
-        self._status_label.setText(status)
+    @Slot(object, dict)
+    def _on_download_succeeded(self, request, payload: dict) -> None:
+        """完了ファイルをアクティブライブラリへ登録する（主スレッド）。"""
+        if self._active_lib is None or self._db is None:
+            return
+        try:
+            clip_id = self._active_lib.register_download(self._db, payload)
+        except Exception as e:
+            self._on_log(f"[Library] Registration failed: {e}")
+            return
+        if clip_id is None:
+            self._on_log("[Library] Downloaded file is outside the library — not registered.")
+        else:
+            self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
+            self._library_view.refresh()
+            self._update_library_status()
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    @Slot()
+    def _open_settings(self) -> None:
+        SettingsDialog(self._settings, self).exec()
 
     @Slot(str)
     def _on_log(self, message: str) -> None:
         self._log.appendPlainText(message)
-
-    @Slot(bool, str)
-    def _on_finished(self, success: bool, message: str) -> None:
-        self._set_downloading(False)
-        self._status_label.setText(message)
-        self.statusBar().showMessage(message)
-        if success:
-            self._progress_bar.setValue(100)
-            self._log.appendPlainText(f"\n[SUCCESS] {message}")
-        else:
-            self._log.appendPlainText(f"\n[FAILED] {message}")
-
-    @Slot()
-    def _choose_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Download Folder", self._settings.output_dir
-        )
-        if path:
-            self._settings.output_dir = path
-            self._folder_label.setText(path)
-
-    @Slot()
-    def _open_settings(self) -> None:
-        dlg = SettingsDialog(self._settings, self)
-        if dlg.exec():
-            self._folder_label.setText(self._settings.output_dir)
-            self._format_combo.setCurrentText(self._settings.save_format)
-            self._quality_combo.setCurrentText(self._settings.default_quality)
-            self._codec_combo.setCurrentText(self._settings.default_codec)
-            self._subtitle_check.setChecked(self._settings.write_subtitles)
 
     # ------------------------------------------------------------------
     # Library
@@ -299,9 +181,8 @@ class MainWindow(QMainWindow):
         self._active_lib = self._libraries.active_library()
         if self._active_lib is not None:
             self._db = self._active_lib.open_db()
-            self._folder_label.setText(str(self._active_lib.root))
         self._library_view.set_library(self._active_lib, self._db)
-        self._filter_panel.set_db(self._db)
+        self._filter_panel.set_library(self._active_lib, self._db)
         self._update_library_status()
 
     def _update_library_status(self) -> None:
@@ -316,7 +197,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def _open_library(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "Select or create a library folder", self._settings.output_dir
+            self, "Select or create a library folder",
+            str(self._active_lib.root) if self._active_lib else "",
         )
         if not path:
             return
@@ -335,29 +217,22 @@ class MainWindow(QMainWindow):
             return
         labels = [f"{i.name}  ({i.root})" for i in infos]
         current = self._libraries.active_root()
-        current_idx = next(
-            (n for n, i in enumerate(infos) if i.root == current), 0
-        )
+        current_idx = next((n for n, i in enumerate(infos) if i.root == current), 0)
         label, ok = QInputDialog.getItem(
             self, "Switch Library", "Active library:", labels, current_idx, False
         )
         if ok and label:
-            chosen = infos[labels.index(label)]
-            self._libraries.set_active(chosen.root)
+            self._libraries.set_active(infos[labels.index(label)].root)
             self._load_active_library()
 
     @Slot()
     def _rescan_library(self) -> None:
         if self._active_lib is None:
-            QMessageBox.information(
-                self, "No library", "Open a library before scanning."
-            )
+            QMessageBox.information(self, "No library", "Open a library before scanning.")
             return
         if self._scan_worker and self._scan_worker.isRunning():
             return
-        self._scan_worker = ScanWorker(
-            str(self._active_lib.root), self._active_lib.name
-        )
+        self._scan_worker = ScanWorker(str(self._active_lib.root), self._active_lib.name)
         self._scan_worker.log_message.connect(self._on_log)
         self._scan_worker.progress.connect(
             lambda n, p: self.statusBar().showMessage(f"Scanning... ({n}) {p}")
@@ -368,6 +243,7 @@ class MainWindow(QMainWindow):
     @Slot(int, int)
     def _on_scan_finished(self, added: int, missing: int) -> None:
         self._on_log(f"[Library] Scan finished: {added} new, {missing} missing.")
+        self._filter_panel.rebuild()    # 新しい実フォルダをツリーに反映
         self._library_view.refresh()
         self._update_library_status()
 
@@ -379,14 +255,10 @@ class MainWindow(QMainWindow):
             return
         if self._enrich_worker and self._enrich_worker.isRunning():
             return
-        self._enrich_worker = EnrichWorker(
-            str(self._active_lib.root), self._active_lib.name
-        )
+        self._enrich_worker = EnrichWorker(str(self._active_lib.root), self._active_lib.name)
         self._enrich_worker.log_message.connect(self._on_log)
         self._enrich_worker.progress.connect(
-            lambda done, total: self.statusBar().showMessage(
-                f"Enriching... {done}/{total}"
-            )
+            lambda done, total: self.statusBar().showMessage(f"Enriching... {done}/{total}")
         )
         self._enrich_worker.finished_enrich.connect(self._on_enrich_finished)
         self._enrich_worker.start()
@@ -400,7 +272,7 @@ class MainWindow(QMainWindow):
     @Slot(dict)
     def _on_filter_changed(self, flt: dict) -> None:
         self._library_view.set_filter(
-            folder_id=flt.get("folder_id"),
+            folder_path=flt.get("folder_path"),
             tag_id=flt.get("tag_id"),
             missing_only=flt.get("missing_only", False),
         )
@@ -413,36 +285,15 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _open_location(self, abs_path: str) -> None:
         """クリップを含むフォルダを開く。"""
-        from pathlib import Path
-        folder = str(Path(abs_path).parent)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(abs_path).parent)))
 
-    @Slot(dict)
-    def _on_download_succeeded(self, payload: dict) -> None:
-        """Register a freshly downloaded clip into the active library DB."""
-        if self._active_lib is None or self._db is None:
-            return
-        try:
-            clip_id = self._active_lib.register_download(self._db, payload)
-        except Exception as e:  # never let registration crash the UI
-            self._on_log(f"[Library] Registration failed: {e}")
-            return
-        if clip_id is None:
-            self._on_log(
-                "[Library] Downloaded file is outside the active library — not registered."
-            )
-        else:
-            self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
-            self._library_view.refresh()
-            self._update_library_status()
+    @Slot(str)
+    def _open_folder(self, abs_dir: str) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(abs_dir))
 
     # ------------------------------------------------------------------
-    # Helpers
+    # Window
     # ------------------------------------------------------------------
-
-    def _set_downloading(self, downloading: bool) -> None:
-        self._download_btn.setEnabled(not downloading)
-        self._cancel_btn.setEnabled(downloading)
 
     def _restore_geometry(self) -> None:
         geom, state = self._settings.load_geometry()
@@ -452,7 +303,6 @@ class MainWindow(QMainWindow):
             self.restoreState(state)
         else:
             # 最終的に ~1920x1080 を想定（plan.md の UI レイアウト像）。
-            # 初期はやや小さめの大画面を既定にする。
             self.resize(1280, 800)
 
     def closeEvent(self, event) -> None:
@@ -460,9 +310,7 @@ class MainWindow(QMainWindow):
             bytes(self.saveGeometry()),
             bytes(self.saveState()),
         )
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(3000)
+        self._queue.shutdown(3000)
         if self._scan_worker and self._scan_worker.isRunning():
             self._scan_worker.wait(3000)
         if self._enrich_worker and self._enrich_worker.isRunning():

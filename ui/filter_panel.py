@@ -1,11 +1,12 @@
-"""左ペインの絞り込みツリー（フォルダ / タグ / 欠落）。
+"""左ペインの階層ツリー（実フォルダ ＋ タグ ＋ 欠落）。
 
-DB アクセスは主スレッドの ``LibraryDatabase`` を ``set_db`` で受け取る。選択が
-変わると ``filter_changed(dict)`` を emit する。dict のキー::
+フォルダ階層は **ライブラリルート配下の実ディレクトリ**を表す。選択が変わると
+``filter_changed(dict)`` を emit する::
 
-    {"folder_id": int|None, "tag_id": int|None, "missing_only": bool}
+    {"folder_path": str|None, "tag_id": int|None, "missing_only": bool}
 
-フォルダ/タグの作成・改名・削除もここで行う（変更後 ``library_changed`` を emit）。
+フォルダ右クリックから「ここにダウンロード」「新規サブフォルダ」「名前変更」
+「エクスプローラで開く」を行える。タグは DB の tags を使う（横断分類）。
 """
 from __future__ import annotations
 
@@ -20,19 +21,22 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QMenu,
+    QStyle,
 )
 
-# item の種別を UserRole に格納
-_ROLE_KIND = Qt.ItemDataRole.UserRole       # "all" | "missing" | "folder" | "tag" | "header"
-_ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder/tag id
+_ROLE_KIND = Qt.ItemDataRole.UserRole       # "folder" | "tag" | "missing" | "header"
+_ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder=rel path(str, ""=root) / tag=id(int)
 
 
 class FilterPanel(QWidget):
     filter_changed = Signal(dict)
-    library_changed = Signal()   # フォルダ/タグの構成が変わった
+    download_here_requested = Signal(str)    # 保存先（絶対パス）
+    open_folder_requested = Signal(str)      # フォルダ（絶対パス）
+    library_changed = Signal()               # フォルダ/タグ構成が変わった
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._library = None
         self._db = None
         self._init_ui()
 
@@ -61,7 +65,8 @@ class FilterPanel(QWidget):
     # Data
     # ------------------------------------------------------------------
 
-    def set_db(self, db) -> None:
+    def set_library(self, library, db) -> None:
+        self._library = library
         self._db = db
         self.rebuild()
 
@@ -69,45 +74,48 @@ class FilterPanel(QWidget):
         self._tree.blockSignals(True)
         self._tree.clear()
 
-        all_item = self._make_item("All clips", "all")
-        self._tree.addTopLevelItem(all_item)
+        if self._library is None:
+            self._tree.blockSignals(False)
+            return
+
+        # 実フォルダのルート（= ライブラリ）。選択で全件表示。
+        root_item = self._make_item(f"{self._library.name}  (all)", "folder", "")
+        root_item.setIcon(0, self._dir_icon())
+        self._tree.addTopLevelItem(root_item)
+        items = {"": root_item}
+        for rel in self._library.list_dirs():
+            parts = rel.split("/")
+            parent_rel = "/".join(parts[:-1])
+            parent_item = items.get(parent_rel, root_item)
+            item = self._make_item(parts[-1], "folder", rel)
+            item.setIcon(0, self._dir_icon())
+            parent_item.addChild(item)
+            items[rel] = item
+        root_item.setExpanded(True)
+
         self._tree.addTopLevelItem(self._make_item("Missing files", "missing"))
 
+        # タグ（横断分類）
         if self._db is not None:
-            # Folders（parent_id で入れ子）
-            folders_header = self._make_item("Folders", "header")
-            self._tree.addTopLevelItem(folders_header)
-            folders = self._db.list_folders()
-            by_parent: dict = {}
-            for f in folders:
-                by_parent.setdefault(f.parent_id, []).append(f)
-
-            def add_children(parent_item, parent_id):
-                for f in by_parent.get(parent_id, []):
-                    item = self._make_item(f.name, "folder", f.id)
-                    parent_item.addChild(item)
-                    add_children(item, f.id)
-
-            add_children(folders_header, None)
-            folders_header.setExpanded(True)
-
-            # Tags
             tags_header = self._make_item("Tags", "header")
             self._tree.addTopLevelItem(tags_header)
             for t in self._db.list_tags():
                 tags_header.addChild(self._make_item(f"# {t.name}", "tag", t.id))
             tags_header.setExpanded(True)
 
-        self._tree.setCurrentItem(all_item)
+        self._tree.setCurrentItem(root_item)
         self._tree.blockSignals(False)
 
+    def _dir_icon(self):
+        return self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+
     @staticmethod
-    def _make_item(label: str, kind: str, item_id: int | None = None) -> QTreeWidgetItem:
+    def _make_item(label: str, kind: str, item_id=None) -> QTreeWidgetItem:
         item = QTreeWidgetItem([label])
         item.setData(0, _ROLE_KIND, kind)
         item.setData(0, _ROLE_ID, item_id)
         if kind == "header":
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # 選択不可（見出し）
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         return item
 
     # ------------------------------------------------------------------
@@ -120,34 +128,42 @@ class FilterPanel(QWidget):
         kind = current.data(0, _ROLE_KIND)
         item_id = current.data(0, _ROLE_ID)
         if kind == "folder":
-            self.filter_changed.emit({"folder_id": item_id, "tag_id": None, "missing_only": False})
+            # ルート("")は None（全件）、サブフォルダはその配下。
+            self.filter_changed.emit(
+                {"folder_path": item_id or None, "tag_id": None, "missing_only": False}
+            )
         elif kind == "tag":
-            self.filter_changed.emit({"folder_id": None, "tag_id": item_id, "missing_only": False})
+            self.filter_changed.emit(
+                {"folder_path": None, "tag_id": item_id, "missing_only": False}
+            )
         elif kind == "missing":
-            self.filter_changed.emit({"folder_id": None, "tag_id": None, "missing_only": True})
-        elif kind == "all":
-            self.filter_changed.emit({"folder_id": None, "tag_id": None, "missing_only": False})
+            self.filter_changed.emit(
+                {"folder_path": None, "tag_id": None, "missing_only": True}
+            )
 
     # ------------------------------------------------------------------
-    # Folder / Tag CRUD
+    # Folder / Tag 操作
     # ------------------------------------------------------------------
 
-    def _selected(self) -> tuple[str | None, int | None]:
+    def _selected(self) -> tuple[str | None, object]:
         item = self._tree.currentItem()
         if item is None:
             return None, None
         return item.data(0, _ROLE_KIND), item.data(0, _ROLE_ID)
 
     def _new_folder(self) -> None:
-        if self._db is None:
+        if self._library is None:
             return
+        kind, rel = self._selected()
+        parent_rel = rel if kind == "folder" else ""   # 選択フォルダ配下、なければルート
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
         if not (ok and name.strip()):
             return
-        # 選択中がフォルダならその子として作成
-        kind, fid = self._selected()
-        parent_id = fid if kind == "folder" else None
-        self._db.add_folder(name.strip(), parent_id)
+        try:
+            self._library.make_dir(parent_rel or None, name.strip())
+        except Exception as e:
+            QMessageBox.warning(self, "New Folder failed", str(e))
+            return
         self.rebuild()
         self.library_changed.emit()
 
@@ -166,42 +182,65 @@ class FilterPanel(QWidget):
         if item is None:
             return
         kind = item.data(0, _ROLE_KIND)
-        if kind not in ("folder", "tag"):
-            return
-        menu = QMenu(self)
-        rename_act = menu.addAction("Rename...")
-        delete_act = menu.addAction("Delete")
-        chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
-        if chosen is rename_act:
-            self._rename(kind, item)
-        elif chosen is delete_act:
-            self._delete(kind, item)
-
-    def _rename(self, kind: str, item: QTreeWidgetItem) -> None:
         item_id = item.data(0, _ROLE_ID)
-        current = item.text(0).lstrip("# ").strip()
-        name, ok = QInputDialog.getText(self, "Rename", "New name:", text=current)
+        menu = QMenu(self)
+
+        if kind == "folder":
+            abs_dir = (
+                str(self._library.root) if not item_id
+                else str(self._library.to_abs(item_id))
+            )
+            menu.addAction("Download here...").triggered.connect(
+                lambda: self.download_here_requested.emit(abs_dir)
+            )
+            menu.addAction("New subfolder...").triggered.connect(self._new_folder)
+            if item_id:   # ルート自体は改名しない
+                menu.addAction("Rename...").triggered.connect(
+                    lambda: self._rename_folder(item_id)
+                )
+            menu.addAction("Open in Explorer").triggered.connect(
+                lambda: self.open_folder_requested.emit(abs_dir)
+            )
+        elif kind == "tag":
+            menu.addAction("Rename...").triggered.connect(
+                lambda: self._rename_tag(item, item_id)
+            )
+            menu.addAction("Delete").triggered.connect(
+                lambda: self._delete_tag(item, item_id)
+            )
+        else:
+            return
+
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _rename_folder(self, rel: str) -> None:
+        current = rel.split("/")[-1]
+        name, ok = QInputDialog.getText(self, "Rename Folder", "New name:", text=current)
         if not (ok and name.strip()):
             return
-        if kind == "folder":
-            self._db.rename_folder(item_id, name.strip())
-        else:
-            self._db.rename_tag(item_id, name.strip())
+        try:
+            self._library.rename_dir(self._db, rel, name.strip())
+        except Exception as e:
+            QMessageBox.warning(self, "Rename failed", str(e))
+            return
         self.rebuild()
         self.library_changed.emit()
 
-    def _delete(self, kind: str, item: QTreeWidgetItem) -> None:
-        item_id = item.data(0, _ROLE_ID)
-        label = item.text(0)
-        msg = (
-            f"Delete {kind} '{label}'?\n"
-            "（クリップ自体は削除されません。フォルダの場合、子フォルダも削除されます。）"
-        )
-        if QMessageBox.question(self, "Delete", msg) != QMessageBox.StandardButton.Yes:
+    def _rename_tag(self, item, tag_id) -> None:
+        current = item.text(0).lstrip("# ").strip()
+        name, ok = QInputDialog.getText(self, "Rename Tag", "New name:", text=current)
+        if not (ok and name.strip()):
             return
-        if kind == "folder":
-            self._db.delete_folder(item_id)
-        else:
-            self._db.delete_tag(item_id)
+        self._db.rename_tag(tag_id, name.strip())
+        self.rebuild()
+        self.library_changed.emit()
+
+    def _delete_tag(self, item, tag_id) -> None:
+        if QMessageBox.question(
+            self, "Delete Tag",
+            f"Delete tag '{item.text(0)}'?（クリップ自体は削除されません）",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._db.delete_tag(tag_id)
         self.rebuild()
         self.library_changed.emit()

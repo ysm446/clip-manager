@@ -41,16 +41,29 @@ core/
   metadata.py            # probe() — ffprobe で duration/解像度/コーデック取得（純関数）
   thumbnails.py          # generate_thumbnail() — ffmpeg でサムネイル生成（純関数）
   enrich_worker.py       # EnrichWorker(QThread) — メタ補完＋サムネイル生成
+  download_queue.py      # DownloadQueue(順次) + DownloadRequest。worker_factory 注入可
 ui/
-  main_window.py         # MainWindow — Download/Library のタブ。Library は QSplitter
-  filter_panel.py        # FilterPanel — フォルダ/タグツリー・絞り込み・CRUD
+  main_window.py         # MainWindow — Library/Queue のタブ。Library は QSplitter
+  filter_panel.py        # FilterPanel — 実フォルダ/タグツリー・絞り込み・Download here
   library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・付与・再生要求
+  download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
+  queue_view.py          # QueueView — ダウンロードキューの進捗一覧
   settings_dialog.py     # SettingsDialog
 ```
 
 Library タブは `QSplitter[FilterPanel | LibraryView]`。最終的に右へ動画プレイヤー
-（Phase 5）を足し、~1920×1080 の一画面で階層／サムネイル／再生を出す
-（plan.md「UI レイアウト像」）。
+（Phase 5）を足し、~1920×1080 の一画面で階層／サムネイル／再生を出す。
+
+### フォルダ階層は実フォルダ（重要な設計）
+
+- フォルダ階層は**ライブラリルート配下の実ディレクトリ**を表す（論理フォルダでは
+  ない）。ツリーは `Library.list_dirs()` で構築し、絞り込みは `rel_path` の前方一致
+  （`folder_path`、サブフォルダ含む）。**FS が真実、DB は再スキャンで再構築できる索引。**
+- 横断分類は**タグ**（DB `tags`）。論理フォルダ（`folders`/`folder_id`）は UI 非使用
+  （スキーマは互換で残置）。
+- ダウンロードはフォルダ右クリック「Download here」→ `DownloadDialog` → `DownloadQueue`
+  に積む（**順次処理**）。完了ファイルはそのフォルダに保存され、`register_download`
+  で自動登録される。進捗は Queue タブ（`QueueView`）。
 
 ### スレッドモデル
 
