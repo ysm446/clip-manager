@@ -30,9 +30,10 @@ _ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder=rel(str,""=root) / clip=id(
 
 
 class _FolderTree(QTreeWidget):
-    """フォルダへのクリップ D&D 移動に対応したツリー。"""
+    """フォルダへのクリップ D&D 移動・Delete キー削除に対応したツリー。"""
 
     clip_dropped = Signal(int, str)   # (clip_id, dest_folder_rel)
+    delete_requested = Signal(list)   # [clip_id, ...]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -41,6 +42,18 @@ class _FolderTree(QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Delete:
+            ids = [
+                int(it.data(0, _ROLE_ID))
+                for it in self.selectedItems()
+                if it.data(0, _ROLE_KIND) == "clip"
+            ]
+            if ids:
+                self.delete_requested.emit(ids)
+                return
+        super().keyPressEvent(event)
 
     def dropEvent(self, event) -> None:
         target = self.itemAt(event.position().toPoint())
@@ -91,6 +104,7 @@ class FilterPanel(QWidget):
         self._tree.currentItemChanged.connect(self._on_selection_changed)
         self._tree.itemDoubleClicked.connect(self._on_double_clicked)
         self._tree.clip_dropped.connect(self._on_clip_dropped)
+        self._tree.delete_requested.connect(self._delete_clips)
         layout.addWidget(self._tree, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -200,6 +214,43 @@ class FilterPanel(QWidget):
         if item is not None and item.data(0, _ROLE_KIND) == "clip":
             self.clip_activated.emit(int(item.data(0, _ROLE_ID)))
 
+    def _selected_clip_ids(self) -> list[int]:
+        return [
+            int(it.data(0, _ROLE_ID))
+            for it in self._tree.selectedItems()
+            if it.data(0, _ROLE_KIND) == "clip"
+        ]
+
+    # ------------------------------------------------------------------
+    # Delete clips (ゴミ箱へ)
+    # ------------------------------------------------------------------
+
+    def _delete_clips(self, ids: list[int]) -> None:
+        if self._db is None or self._library is None or not ids:
+            return
+        clips = [c for c in (self._db.get_clip(i) for i in ids) if c is not None]
+        if not clips:
+            return
+        names = "\n".join(f"・{c.title}" for c in clips[:8])
+        if len(clips) > 8:
+            names += f"\n…他 {len(clips) - 8} 件"
+        if QMessageBox.question(
+            self, "Delete",
+            f"{len(clips)} 件をゴミ箱へ移動しますか？\n{names}\n"
+            "（実ファイルと字幕・サムネイルを削除し、ライブラリからも除外します。）",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        failed = []
+        for c in clips:
+            try:
+                self._library.delete_clip(self._db, c.id, to_trash=True)
+            except Exception as e:
+                failed.append(f"{c.title}: {e}")
+        if failed:
+            QMessageBox.warning(self, "Delete failed", "\n".join(failed))
+        self.rebuild()
+        self.library_changed.emit()
+
     # ------------------------------------------------------------------
     # Drag & drop move
     # ------------------------------------------------------------------
@@ -288,6 +339,13 @@ class FilterPanel(QWidget):
             menu.addAction("Play").triggered.connect(
                 lambda: self.clip_activated.emit(int(item_id))
             )
+            menu.addSeparator()
+            # 右クリックしたファイルを選択に含めて、選択中のクリップをまとめて削除
+            ids = self._selected_clip_ids()
+            if int(item_id) not in ids:
+                ids = [int(item_id)]
+            label = "Delete..." if len(ids) == 1 else f"Delete {len(ids)} files..."
+            menu.addAction(label).triggered.connect(lambda: self._delete_clips(ids))
         elif kind == "tag":
             menu.addAction("Rename...").triggered.connect(
                 lambda: self._rename_tag(item, item_id)
