@@ -42,10 +42,15 @@ core/
   thumbnails.py          # generate_thumbnail() — ffmpeg でサムネイル生成（純関数）
   enrich_worker.py       # EnrichWorker(QThread) — メタ補完＋サムネイル生成
 ui/
-  main_window.py         # MainWindow — Download/Library のタブ構成。各ワーカーを管理
-  library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・再生要求
+  main_window.py         # MainWindow — Download/Library のタブ。Library は QSplitter
+  filter_panel.py        # FilterPanel — フォルダ/タグツリー・絞り込み・CRUD
+  library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・付与・再生要求
   settings_dialog.py     # SettingsDialog
 ```
+
+Library タブは `QSplitter[FilterPanel | LibraryView]`。最終的に右へ動画プレイヤー
+（Phase 5）を足し、~1920×1080 の一画面で階層／サムネイル／再生を出す
+（plan.md「UI レイアウト像」）。
 
 ### スレッドモデル
 

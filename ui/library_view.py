@@ -26,10 +26,11 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QStyle,
+    QMenu,
 )
 
 _DETAILS, _THUMBS = 0, 1
-_ROLE_CLIP = Qt.ItemDataRole.UserRole
+_ROLE_CLIP = Qt.ItemDataRole.UserRole   # clip id (int)
 
 
 def fmt_duration(seconds: float | None) -> str:
@@ -69,6 +70,8 @@ class LibraryView(QWidget):
         super().__init__(parent)
         self._library = None
         self._db = None
+        self._filter = {"folder_id": None, "tag_id": None, "missing_only": False}
+        self._by_id: dict = {}   # clip id -> Clip（現在表示中）
         self._init_ui()
 
     # ------------------------------------------------------------------
@@ -117,6 +120,10 @@ class LibraryView(QWidget):
             0, QHeaderView.ResizeMode.Stretch
         )
         self._table.doubleClicked.connect(self._on_table_double_clicked)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(self._table.viewport().mapToGlobal(pos))
+        )
         self._stack.addWidget(self._table)
 
         # thumbnails: icon list
@@ -128,6 +135,10 @@ class LibraryView(QWidget):
         self._list.setMovement(QListWidget.Movement.Static)
         self._list.setWordWrap(True)
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(self._list.viewport().mapToGlobal(pos))
+        )
         self._stack.addWidget(self._list)
 
         layout.addWidget(self._stack, stretch=1)
@@ -148,16 +159,30 @@ class LibraryView(QWidget):
     def set_library(self, library, db) -> None:
         self._library = library
         self._db = db
+        self._filter = {"folder_id": None, "tag_id": None, "missing_only": False}
+        self.refresh()
+
+    def set_filter(self, folder_id=None, tag_id=None, missing_only=False) -> None:
+        self._filter = {
+            "folder_id": folder_id, "tag_id": tag_id, "missing_only": missing_only,
+        }
         self.refresh()
 
     def refresh(self) -> None:
         if self._db is None or self._library is None:
             self._table.setRowCount(0)
             self._list.clear()
+            self._by_id = {}
             self._count_label.setText("No library")
             return
         search = self._search.text().strip() or None
-        clips = self._db.list_clips(search=search)
+        clips = self._db.list_clips(
+            folder_id=self._filter["folder_id"],
+            tag_id=self._filter["tag_id"],
+            missing_only=self._filter["missing_only"],
+            search=search,
+        )
+        self._by_id = {c.id: c for c in clips}
         self._populate_details(clips)
         self._populate_thumbs(clips)
         missing = sum(1 for c in clips if c.missing)
@@ -181,7 +206,7 @@ class LibraryView(QWidget):
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if col == 0:
-                    item.setData(_ROLE_CLIP, clip.rel_path)
+                    item.setData(_ROLE_CLIP, clip.id)
                 if clip.missing:
                     item.setForeground(Qt.GlobalColor.gray)
                 self._table.setItem(row, col, item)
@@ -190,7 +215,7 @@ class LibraryView(QWidget):
         self._list.clear()
         for clip in clips:
             item = QListWidgetItem(clip.title)
-            item.setData(_ROLE_CLIP, clip.rel_path)
+            item.setData(_ROLE_CLIP, clip.id)
             item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             icon = self._placeholder_icon
             if clip.thumbnail_path:
@@ -209,10 +234,11 @@ class LibraryView(QWidget):
     def _on_view_changed(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
 
-    def _abs_from_rel(self, rel_path: str) -> str | None:
-        if not rel_path or self._library is None:
+    def _abs_path(self, clip_id) -> str | None:
+        clip = self._by_id.get(clip_id)
+        if clip is None or self._library is None:
             return None
-        return str(self._library.to_abs(rel_path))
+        return str(self._library.to_abs(clip.rel_path))
 
     def _on_table_double_clicked(self, index) -> None:
         item = self._table.item(index.row(), 0)
@@ -222,7 +248,79 @@ class LibraryView(QWidget):
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         self._emit_play(item.data(_ROLE_CLIP))
 
-    def _emit_play(self, rel_path) -> None:
-        abs_path = self._abs_from_rel(rel_path)
+    def _emit_play(self, clip_id) -> None:
+        abs_path = self._abs_path(clip_id)
         if abs_path:
             self.play_requested.emit(abs_path)
+
+    # ------------------------------------------------------------------
+    # Context menu (assign folder / toggle tags / play / locate)
+    # ------------------------------------------------------------------
+
+    def _current_clip_id(self):
+        if self._stack.currentIndex() == _THUMBS:
+            item = self._list.currentItem()
+            return item.data(_ROLE_CLIP) if item else None
+        item = self._table.item(self._table.currentRow(), 0)
+        return item.data(_ROLE_CLIP) if item else None
+
+    def _show_context_menu(self, global_pos) -> None:
+        if self._db is None:
+            return
+        clip_id = self._current_clip_id()
+        if clip_id is None:
+            return
+        menu = QMenu(self)
+        menu.addAction("Play").triggered.connect(lambda: self._emit_play(clip_id))
+        menu.addAction("Open file location").triggered.connect(
+            lambda: self._emit_locate(clip_id)
+        )
+        menu.addSeparator()
+
+        # Move to folder ▸
+        folder_menu = menu.addMenu("Move to folder")
+        clip = self._by_id.get(clip_id)
+        none_act = folder_menu.addAction("(None)")
+        none_act.setCheckable(True)
+        none_act.setChecked(clip is not None and clip.folder_id is None)
+        none_act.triggered.connect(lambda: self._set_folder(clip_id, None))
+        for folder in self._db.list_folders():
+            act = folder_menu.addAction(folder.name)
+            act.setCheckable(True)
+            act.setChecked(clip is not None and clip.folder_id == folder.id)
+            act.triggered.connect(
+                lambda _checked=False, fid=folder.id: self._set_folder(clip_id, fid)
+            )
+
+        # Tags ▸ (checkable)
+        tags = self._db.list_tags()
+        tag_menu = menu.addMenu("Tags")
+        if not tags:
+            tag_menu.addAction("(no tags — create one in the left panel)").setEnabled(False)
+        else:
+            assigned = {t.id for t in self._db.tags_for_clip(clip_id)}
+            for tag in tags:
+                act = tag_menu.addAction(tag.name)
+                act.setCheckable(True)
+                act.setChecked(tag.id in assigned)
+                act.triggered.connect(
+                    lambda checked, tid=tag.id: self._toggle_tag(clip_id, tid, checked)
+                )
+
+        menu.exec(global_pos)
+
+    def _set_folder(self, clip_id, folder_id) -> None:
+        self._db.set_clip_folder(clip_id, folder_id)
+        self.refresh()
+
+    def _toggle_tag(self, clip_id, tag_id, checked) -> None:
+        if checked:
+            self._db.assign_tag(clip_id, tag_id)
+        else:
+            self._db.unassign_tag(clip_id, tag_id)
+        self.refresh()
+
+    def _emit_locate(self, clip_id) -> None:
+        abs_path = self._abs_path(clip_id)
+        if abs_path:
+            self.open_location_requested.emit(abs_path)

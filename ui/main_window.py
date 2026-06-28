@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QTabWidget,
+    QSplitter,
 )
 from PySide6.QtCore import Qt, Slot, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -27,6 +28,7 @@ from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
 from core.enrich_worker import EnrichWorker
 from ui.library_view import LibraryView
+from ui.filter_panel import FilterPanel
 from ui.settings_dialog import SettingsDialog
 
 
@@ -148,11 +150,22 @@ class MainWindow(QMainWindow):
 
         self._tabs.addTab(download_tab, "Download")
 
-        # --- Library tab ---
+        # --- Library tab: [ filter tree | clip list ] ---
+        self._filter_panel = FilterPanel()
         self._library_view = LibraryView()
         self._library_view.play_requested.connect(self._play_clip)
         self._library_view.enrich_requested.connect(self._enrich_library)
-        self._tabs.addTab(self._library_view, "Library")
+        self._library_view.open_location_requested.connect(self._open_location)
+        self._filter_panel.filter_changed.connect(self._on_filter_changed)
+        self._filter_panel.library_changed.connect(self._library_view.refresh)
+
+        library_split = QSplitter(Qt.Orientation.Horizontal)
+        library_split.addWidget(self._filter_panel)
+        library_split.addWidget(self._library_view)
+        library_split.setStretchFactor(0, 0)
+        library_split.setStretchFactor(1, 1)
+        library_split.setSizes([260, 1100])
+        self._tabs.addTab(library_split, "Library")
 
         # --- Menu bar ---
         file_menu = self.menuBar().addMenu("File")
@@ -287,6 +300,7 @@ class MainWindow(QMainWindow):
             self._db = self._active_lib.open_db()
             self._folder_label.setText(str(self._active_lib.root))
         self._library_view.set_library(self._active_lib, self._db)
+        self._filter_panel.set_db(self._db)
         self._update_library_status()
 
     def _update_library_status(self) -> None:
@@ -382,10 +396,25 @@ class MainWindow(QMainWindow):
         self._library_view.refresh()
         self._update_library_status()
 
+    @Slot(dict)
+    def _on_filter_changed(self, flt: dict) -> None:
+        self._library_view.set_filter(
+            folder_id=flt.get("folder_id"),
+            tag_id=flt.get("tag_id"),
+            missing_only=flt.get("missing_only", False),
+        )
+
     @Slot(str)
     def _play_clip(self, abs_path: str) -> None:
         """クリップを既定のプレイヤーで開く（アプリ内プレイヤーは Phase 5）。"""
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+
+    @Slot(str)
+    def _open_location(self, abs_path: str) -> None:
+        """クリップを含むフォルダを開く。"""
+        from pathlib import Path
+        folder = str(Path(abs_path).parent)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     @Slot(dict)
     def _on_download_succeeded(self, payload: dict) -> None:
@@ -421,7 +450,9 @@ class MainWindow(QMainWindow):
         if state:
             self.restoreState(state)
         else:
-            self.resize(720, 540)
+            # 最終的に ~1920x1080 を想定（plan.md の UI レイアウト像）。
+            # 初期はやや小さめの大画面を既定にする。
+            self.resize(1280, 800)
 
     def closeEvent(self, event) -> None:
         self._settings.save_geometry(

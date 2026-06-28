@@ -211,25 +211,32 @@ class LibraryDatabase:
         self,
         *,
         folder_id: int | None = None,
+        tag_id: int | None = None,
         search: str | None = None,
         include_missing: bool = True,
+        missing_only: bool = False,
         order_by: str = "added_at DESC",
     ) -> list[Clip]:
-        sql = "SELECT * FROM clips"
+        sql = "SELECT c.* FROM clips c"
         where: list[str] = []
         params: list = []
+        if tag_id is not None:
+            sql += " JOIN clip_tags ct ON ct.clip_id = c.id AND ct.tag_id = ?"
+            params.append(tag_id)
         if folder_id is not None:
-            where.append("folder_id = ?")
+            where.append("c.folder_id = ?")
             params.append(folder_id)
         if search:
-            where.append("title LIKE ?")
+            where.append("c.title LIKE ?")
             params.append(f"%{search}%")
-        if not include_missing:
-            where.append("missing = 0")
+        if missing_only:
+            where.append("c.missing = 1")
+        elif not include_missing:
+            where.append("c.missing = 0")
         if where:
             sql += " WHERE " + " AND ".join(where)
         # order_by は内部呼び出しのみ（外部入力を直接渡さない）
-        sql += f" ORDER BY {order_by}"
+        sql += f" ORDER BY c.{order_by}"
         rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_clip(r) for r in rows]
 
@@ -332,6 +339,10 @@ class LibraryDatabase:
     def list_tags(self) -> list[Tag]:
         rows = self._conn.execute("SELECT * FROM tags ORDER BY name").fetchall()
         return [Tag(id=r["id"], name=r["name"], color=r["color"]) for r in rows]
+
+    def rename_tag(self, tag_id: int, name: str) -> None:
+        self._conn.execute("UPDATE tags SET name = ? WHERE id = ?", (name, tag_id))
+        self._conn.commit()
 
     def delete_tag(self, tag_id: int) -> None:
         self._conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))

@@ -2,6 +2,17 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 3: 整理・検索 フォルダ/タグ）
+
+- `core/database.py`: `list_clips` に `tag_id`/`missing_only` フィルタ、`rename_tag`。
+- `ui/filter_panel.py`（`FilterPanel`: All/Missing/Folders/Tags ツリー、フォルダ/
+  タグ CRUD、`filter_changed`）を追加。
+- `ui/library_view.py`: `set_filter()` と右クリックメニュー（フォルダ移動・タグ
+  トグル・再生・場所を開く）。
+- `ui/main_window.py`: Library タブを QSplitter[ツリー｜一覧] に再編、デフォルト
+  ウィンドウ 1280×800。最終 UI 像（~1920×1080 一画面）を plan.md に明記。
+- Phase 3/既存テスト全通過。
+
 ## 2026-06-28（Phase 2: ライブラリ一覧UI・メタ補完）
 
 - `core/metadata.py`（ffprobe）/ `core/thumbnails.py`（ffmpeg）/

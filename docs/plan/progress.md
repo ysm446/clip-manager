@@ -4,12 +4,26 @@
 
 ## 現在地（サマリ）
 
-- **フェーズ**: Phase 2 完了。次は Phase 3（整理・検索：フォルダ/タグツリー）。
-- **状態**: ライブラリ一覧UI（詳細表/サムネイル切替）＋ ffprobe メタ補完＋ffmpeg
-  サムネイル生成を実装。Download/Library のタブ構成に。ffprobe/ffmpeg を実呼びする
-  Phase 2 テストが全通過（実動画生成→scan→enrich→一覧反映）。
+- **フェーズ**: Phase 3 完了。次は Phase 4（ファイル操作：リネーム/移動/削除/複製）。
+- **状態**: Library タブを [左：フォルダ/タグツリー｜中央：一覧] の QSplitter 構成に。
+  フォルダ/タグの作成・改名・削除、選択での絞り込み、クリップへのフォルダ/タグ付与
+  （右クリック）を実装。デフォルトウィンドウを 1280×800 に拡大。
+- **UI 像（恒久）**: 最終的に ~1920×1080 で 階層／サムネイル／動画再生 を一画面に
+  （plan.md「UI レイアウト像」参照）。右ペインのプレイヤーは Phase 5。
 
 ## 完了済み
+
+- 2026-06-28: **Phase 3 完了**。
+  - `core/database.py`: `list_clips` に `tag_id` / `missing_only` フィルタを追加。
+    `rename_tag` を追加。
+  - `ui/filter_panel.py`（`FilterPanel`: All/Missing/Folders/Tags ツリー、
+    フォルダ/タグの作成・改名・削除、`filter_changed(dict)` を emit）を追加。
+  - `ui/library_view.py`: `set_filter()` と右クリックメニュー（フォルダ移動・
+    タグのトグル・再生・場所を開く）を追加。表示クリップを id で保持。
+  - `ui/main_window.py`: Library タブを QSplitter[FilterPanel | LibraryView] に再編。
+    フィルタ配線、場所を開く、デフォルト 1280×800。
+  - 検証: Phase 3 テスト（folder/tag/missing フィルタ、パネル→一覧連動、付与）と
+    既存テスト（backend/window/phase2）が全通過。
 
 - 2026-06-28: **Phase 2 完了**。
   - `core/metadata.py`（ffprobe で duration/解像度/コーデック/サイズ取得・純関数）、
@@ -71,9 +85,10 @@
       識別子の ClipManager 化を実装し、テストで検証。
 - [x] **Phase 2**: ライブラリ一覧UI（詳細/サムネイル）＋ ffprobe メタ補完＋
       ffmpeg サムネイル生成。Download/Library タブ構成。テスト検証済み。
-- [ ] **Phase 3**: フォルダ/タグ・検索（`ui/filter_panel.py`）。DAO は実装済み
-      （folders/tags/clip_tags）。フォルダ/タグツリーと絞り込みUIを追加する。
-- [ ] **Phase 4**: ファイル操作（リネーム/移動/削除/複製）。
+- [x] **Phase 3**: フォルダ/タグツリー＋絞り込み＋付与（右クリック）。
+      Library タブを QSplitter 構成に。テスト検証済み。
+- [ ] **Phase 4**: ファイル操作（リネーム/移動/削除/複製）。実ファイルと DB を
+      一括更新。削除は既定でゴミ箱へ（send2trash 採否を検討）。
 - [ ] **Phase 5**: `ui/player_widget.py`（アプリ内プレイヤー・字幕）。
 - [ ] **Phase 6**: 欠落検知・空状態・エラー処理・動作確認・docs更新。
 - [ ] **Phase 7+（将来構想）**: ローカルLLM分析。GUI は PySide 継続、推論は
