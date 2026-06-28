@@ -27,7 +27,7 @@ class AppSettings:
 
     @property
     def default_quality(self) -> str:
-        return self._qs.value("download/default_quality", "720p", type=str)
+        return self._qs.value("download/default_quality", "best", type=str)
 
     @default_quality.setter
     def default_quality(self, v: str) -> None:
