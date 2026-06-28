@@ -703,6 +703,11 @@ class FilterPanel(QWidget):
         menu.addAction("Open in Explorer").triggered.connect(
             lambda: self.open_folder_requested.emit(abs_dir)
         )
+        if rel:
+            menu.addSeparator()
+            menu.addAction("Delete folder...").triggered.connect(
+                lambda: self._delete_folder(rel)
+            )
 
     def _add_clip_actions(self, menu, cid: int, ids: list[int]) -> None:
         menu.addAction("Play").triggered.connect(lambda: self.clip_activated.emit(cid))
@@ -773,6 +778,24 @@ class FilterPanel(QWidget):
             return
 
         menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _delete_folder(self, rel: str) -> None:
+        if self._db is None or self._library is None:
+            return
+        n = sum(1 for c in self._db.list_clips() if c.rel_path.startswith(rel + "/"))
+        if QMessageBox.question(
+            self, "Delete folder",
+            f"フォルダ '{rel}' をゴミ箱へ移動しますか？\n"
+            f"中のファイル {n} 件も削除され、ライブラリからも除外されます。",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._library.delete_dir(self._db, rel, to_trash=True)
+        except Exception as e:
+            QMessageBox.warning(self, "Delete folder failed", str(e))
+            return
+        self.rebuild()
+        self.library_changed.emit()
 
     def _rename_folder(self, rel: str) -> None:
         current = rel.split("/")[-1]

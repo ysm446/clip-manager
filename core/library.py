@@ -397,6 +397,35 @@ class Library:
             self._remove_path(path, to_trash)
         db.delete_clip(clip_id)
 
+    def delete_dir(self, db: LibraryDatabase, rel: str, to_trash: bool = True) -> int:
+        """実フォルダごと削除し、配下クリップを DB からも除外する。戻り値は除外件数。
+
+        フォルダ（中のメディアファイル）はゴミ箱へ。クリップのサムネイル・マーカー
+        サムネイル（`.clipmanager/` 内のキャッシュ）も併せて片付ける。
+        """
+        rel = rel.strip("/")
+        if not rel:
+            raise ValueError("ルートフォルダは削除できません。")
+        abs_dir = self.to_abs(rel)
+        if not abs_dir.is_dir():
+            raise FileNotFoundError("フォルダが見つかりません。")
+
+        prefix = rel + "/"
+        affected = [c for c in db.list_clips() if c.rel_path.startswith(prefix)]
+
+        # まずフォルダ本体（メディアファイル）をゴミ箱へ
+        self._remove_path(abs_dir, to_trash)
+
+        # DB から除外し、関連サムネイル（キャッシュ）を片付け
+        for clip in affected:
+            for m in db.list_markers(clip.id):
+                if m.thumbnail_path:
+                    self._remove_path(self.to_abs(m.thumbnail_path), to_trash=False)
+            if clip.thumbnail_path:
+                self._remove_path(self.to_abs(clip.thumbnail_path), to_trash=False)
+            db.delete_clip(clip.id)   # clip_tags / markers は FK で連鎖削除
+        return len(affected)
+
     @staticmethod
     def _remove_path(path: Path, to_trash: bool) -> None:
         if to_trash:
@@ -407,6 +436,9 @@ class Library:
             except Exception:
                 pass  # ゴミ箱が使えなければ永久削除へフォールバック
         try:
-            path.unlink()
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink()
         except OSError:
             pass
