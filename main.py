@@ -7,9 +7,26 @@ from core.config import configure_settings_storage
 from ui.main_window import MainWindow
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.webp"
+APP_ID = "ClipManager.ClipManager.App"
+
+
+def _set_windows_app_id() -> None:
+    """Windows のタスクバーで自前のアイコンを使わせるため AppUserModelID を設定。
+
+    これをしないと Python から起動したアプリのタスクバーアイコンが
+    python/pythonw のものになる（タイトルバーは setWindowIcon で変わる）。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:
+        pass
 
 
 def main() -> None:
+    _set_windows_app_id()
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
