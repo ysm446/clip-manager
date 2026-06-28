@@ -4,12 +4,29 @@
 
 ## 現在地（サマリ）
 
-- **フェーズ**: Phase 1 完了。次は Phase 2（ライブラリ一覧UI）。
-- **状態**: SQLite 基盤・複数ライブラリ管理・DL自動登録・ルート走査取り込みを実装。
-  バックエンド単体テストと MainWindow 統合スモークテストが全通過。
-  アプリ識別子を ClipManager / Clip Manager へ変更（ウィンドウ名も "Clip Manager"）。
+- **フェーズ**: Phase 2 完了。次は Phase 3（整理・検索：フォルダ/タグツリー）。
+- **状態**: ライブラリ一覧UI（詳細表/サムネイル切替）＋ ffprobe メタ補完＋ffmpeg
+  サムネイル生成を実装。Download/Library のタブ構成に。ffprobe/ffmpeg を実呼びする
+  Phase 2 テストが全通過（実動画生成→scan→enrich→一覧反映）。
 
 ## 完了済み
+
+- 2026-06-28: **Phase 2 完了**。
+  - `core/metadata.py`（ffprobe で duration/解像度/コーデック/サイズ取得・純関数）、
+    `core/thumbnails.py`（ffmpeg でサムネイル JPEG 生成・純関数）、
+    `core/enrich_worker.py`（補完を別スレッドで実行・専用DB接続）を追加。
+  - `core/database.py` に `update_metadata()` を追加。
+  - `ui/library_view.py`（`LibraryView`: 詳細表/サムネイルの切替、タイトル検索、
+    ダブルクリックで既定プレイヤー起動、欠落表示）を追加。
+  - `ui/main_window.py` を **Download / Library のタブ構成**へ再編。Enrich/Refresh/
+    再生を配線。DL登録・scan・enrich 後に一覧を refresh。
+  - **テスト分離の改善**: `AppSettings`/`LibraryManager` を `QSettings()`（アプリ
+    スコープ）に変更。テストは `setDefaultFormat(Ini)`+`setPath` で隔離でき、本番は
+    従来どおりレジストリ。（以前はテストがレジストリを汚染していた。掃除済み）
+  - 検証: Phase 2 テスト（probe/thumbnail/整形/scan→enrich→view）と既存の
+    backend・window テストが全通過。レジストリ汚染なしを確認。
+  - 補足: 再生は現状 `QDesktopServices` で外部プレイヤー起動。アプリ内プレイヤーは
+    Phase 5。
 
 - 2026-06-28: **Phase 1 完了**。
   - `core/models.py`（Clip/Folder/Tag/LibraryInfo）、`core/database.py`
@@ -52,9 +69,10 @@
 - [x] **Phase 0**: clip-downloader のソース一式を移植し、`.venv` で起動を確認。
 - [x] **Phase 1**: SQLite基盤・複数ライブラリ管理・DL自動登録・ルート走査取り込み・
       識別子の ClipManager 化を実装し、テストで検証。
-- [ ] **Phase 2**: `ui/library_view.py`（サムネイル/詳細）。取り込み済みクリップを
-      一覧表示。あわせて duration/解像度/コーデックの ffprobe 補完を検討。
-- [ ] **Phase 3**: フォルダ/タグ・検索（`ui/filter_panel.py`）。
+- [x] **Phase 2**: ライブラリ一覧UI（詳細/サムネイル）＋ ffprobe メタ補完＋
+      ffmpeg サムネイル生成。Download/Library タブ構成。テスト検証済み。
+- [ ] **Phase 3**: フォルダ/タグ・検索（`ui/filter_panel.py`）。DAO は実装済み
+      （folders/tags/clip_tags）。フォルダ/タグツリーと絞り込みUIを追加する。
 - [ ] **Phase 4**: ファイル操作（リネーム/移動/削除/複製）。
 - [ ] **Phase 5**: `ui/player_widget.py`（アプリ内プレイヤー・字幕）。
 - [ ] **Phase 6**: 欠落検知・空状態・エラー処理・動作確認・docs更新。

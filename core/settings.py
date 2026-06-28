@@ -8,7 +8,9 @@ class AppSettings:
     APP = "Clip Manager"
 
     def __init__(self):
-        self._qs = QSettings(self.ORG, self.APP)
+        # アプリの organizationName/applicationName（main.py で設定）を使う。
+        # 引数なし QSettings はテスト時に setDefaultFormat/setPath で差し替え可能。
+        self._qs = QSettings()
 
     # --- Download folder ---
 

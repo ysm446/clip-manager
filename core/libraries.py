@@ -13,7 +13,6 @@ from PySide6.QtCore import QSettings
 
 from core.library import Library
 from core.models import LibraryInfo
-from core.settings import AppSettings
 
 _KEY_REGISTRY = "libraries/registry"
 _KEY_ACTIVE = "libraries/active"
@@ -21,10 +20,10 @@ _KEY_ACTIVE = "libraries/active"
 
 class LibraryManager:
     def __init__(self, settings: QSettings | None = None):
-        # テスト時は IniFormat の QSettings を注入できる（既定は本番のレジストリ）。
-        self._qs = settings if settings is not None else QSettings(
-            AppSettings.ORG, AppSettings.APP
-        )
+        # 既定はアプリスコープの QSettings()（main.py が org/app を設定）。
+        # テスト時は IniFormat の QSettings を注入、または setDefaultFormat/
+        # setPath で差し替えできる。
+        self._qs = settings if settings is not None else QSettings()
 
     # ------------------------------------------------------------------
     # レジストリ

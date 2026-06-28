@@ -38,8 +38,12 @@ core/
   library.py             # Library — ルート＋DB、相対/絶対パス変換、走査取り込み・欠落検知
   libraries.py           # LibraryManager — 複数ライブラリの登録/切替（QSettings）
   scan_worker.py         # ScanWorker(QThread) — 走査を別スレッドで実行
+  metadata.py            # probe() — ffprobe で duration/解像度/コーデック取得（純関数）
+  thumbnails.py          # generate_thumbnail() — ffmpeg でサムネイル生成（純関数）
+  enrich_worker.py       # EnrichWorker(QThread) — メタ補完＋サムネイル生成
 ui/
-  main_window.py         # MainWindow — ダウンロード UI ＋ Library メニュー・自動登録
+  main_window.py         # MainWindow — Download/Library のタブ構成。各ワーカーを管理
+  library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・再生要求
   settings_dialog.py     # SettingsDialog
 ```
 
@@ -63,9 +67,19 @@ ui/
 
 ## 設定の永続化
 
-- `QSettings(org="ClipManager", app="Clip Manager")` を使用（Windows はレジストリ）。
+- `QSettings()`（引数なし）を使用。`main.py` が org=`ClipManager` /
+  app=`Clip Manager` を設定するため、Windows ではレジストリのその場所に保存される。
+  テストでは `QSettings.setDefaultFormat(Ini)`＋`setPath` で一時ファイルへ隔離できる。
 - ダウンロード既定値: 保存形式 `MP4` / 画質 `720p` / コーデック `H.264` / 字幕 `True`。
 - ライブラリのレジストリ（登録一覧＋アクティブ）も QSettings に JSON で保持する。
+
+## メタ補完・サムネイル
+
+- 取り込み直後は duration/解像度/コーデック/サムネイルが未設定。`EnrichWorker` が
+  ffprobe/ffmpeg で補完する（別スレッド・専用DB接続）。WAL のため主スレッドの
+  接続は補完後の再クエリで最新を見られる。
+- ffprobe/ffmpeg が無い環境では補完は no-op（アプリは動作する）。
+- サムネイルは `<root>/.clipmanager/thumbnails/<clip_id>.jpg`。
 
 ## 将来構想
 

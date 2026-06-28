@@ -15,14 +15,18 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QInputDialog,
     QMessageBox,
+    QTabWidget,
 )
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QUrl
+from PySide6.QtGui import QDesktopServices
 from core.downloader import DownloadWorker, is_audio_format, SAVE_FORMATS
 from core.settings import AppSettings
 from core.libraries import LibraryManager
 from core.library import Library
 from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
+from core.enrich_worker import EnrichWorker
+from ui.library_view import LibraryView
 from ui.settings_dialog import SettingsDialog
 
 
@@ -36,6 +40,7 @@ class MainWindow(QMainWindow):
         self._active_lib: Library | None = None
         self._db: LibraryDatabase | None = None  # main-thread connection
         self._scan_worker: ScanWorker | None = None
+        self._enrich_worker: EnrichWorker | None = None
         self._init_ui()
         self._load_active_library()
         self._restore_geometry()
@@ -46,9 +51,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _init_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+        self._tabs = QTabWidget()
+        self.setCentralWidget(self._tabs)
+
+        # --- Download tab ---
+        download_tab = QWidget()
+        layout = QVBoxLayout(download_tab)
         layout.setSpacing(10)
         layout.setContentsMargins(16, 16, 16, 16)
 
@@ -137,6 +145,14 @@ class MainWindow(QMainWindow):
         self._log.setMaximumBlockCount(500)
         self._log.setMinimumHeight(160)
         layout.addWidget(self._log)
+
+        self._tabs.addTab(download_tab, "Download")
+
+        # --- Library tab ---
+        self._library_view = LibraryView()
+        self._library_view.play_requested.connect(self._play_clip)
+        self._library_view.enrich_requested.connect(self._enrich_library)
+        self._tabs.addTab(self._library_view, "Library")
 
         # --- Menu bar ---
         file_menu = self.menuBar().addMenu("File")
@@ -270,6 +286,7 @@ class MainWindow(QMainWindow):
         if self._active_lib is not None:
             self._db = self._active_lib.open_db()
             self._folder_label.setText(str(self._active_lib.root))
+        self._library_view.set_library(self._active_lib, self._db)
         self._update_library_status()
 
     def _update_library_status(self) -> None:
@@ -336,7 +353,39 @@ class MainWindow(QMainWindow):
     @Slot(int, int)
     def _on_scan_finished(self, added: int, missing: int) -> None:
         self._on_log(f"[Library] Scan finished: {added} new, {missing} missing.")
+        self._library_view.refresh()
         self._update_library_status()
+
+    @Slot()
+    def _enrich_library(self) -> None:
+        """ffprobe メタ補完＋サムネイル生成をワーカーで実行。"""
+        if self._active_lib is None:
+            QMessageBox.information(self, "No library", "Open a library first.")
+            return
+        if self._enrich_worker and self._enrich_worker.isRunning():
+            return
+        self._enrich_worker = EnrichWorker(
+            str(self._active_lib.root), self._active_lib.name
+        )
+        self._enrich_worker.log_message.connect(self._on_log)
+        self._enrich_worker.progress.connect(
+            lambda done, total: self.statusBar().showMessage(
+                f"Enriching... {done}/{total}"
+            )
+        )
+        self._enrich_worker.finished_enrich.connect(self._on_enrich_finished)
+        self._enrich_worker.start()
+
+    @Slot(int)
+    def _on_enrich_finished(self, updated: int) -> None:
+        self._on_log(f"[Library] Enrich finished: {updated} clip(s) updated.")
+        self._library_view.refresh()
+        self._update_library_status()
+
+    @Slot(str)
+    def _play_clip(self, abs_path: str) -> None:
+        """クリップを既定のプレイヤーで開く（アプリ内プレイヤーは Phase 5）。"""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
     @Slot(dict)
     def _on_download_succeeded(self, payload: dict) -> None:
@@ -354,6 +403,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
+            self._library_view.refresh()
             self._update_library_status()
 
     # ------------------------------------------------------------------
@@ -383,6 +433,9 @@ class MainWindow(QMainWindow):
             self._worker.wait(3000)
         if self._scan_worker and self._scan_worker.isRunning():
             self._scan_worker.wait(3000)
+        if self._enrich_worker and self._enrich_worker.isRunning():
+            self._enrich_worker.cancel()
+            self._enrich_worker.wait(3000)
         if self._db is not None:
             self._db.close()
             self._db = None

@@ -259,6 +259,32 @@ class LibraryDatabase:
     def count_clips(self) -> int:
         return self._conn.execute("SELECT COUNT(*) AS n FROM clips").fetchone()["n"]
 
+    def update_metadata(
+        self,
+        clip_id: int,
+        *,
+        duration: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        vcodec: str | None = None,
+        filesize: int | None = None,
+        thumbnail_path: str | None = None,
+    ) -> None:
+        """ffprobe / サムネイル生成の結果で None でない項目だけ更新する。"""
+        fields = {
+            "duration": duration, "width": width, "height": height,
+            "vcodec": vcodec, "filesize": filesize, "thumbnail_path": thumbnail_path,
+        }
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{c} = ?" for c in updates)
+        self._conn.execute(
+            f"UPDATE clips SET {set_clause} WHERE id = ?",
+            [*updates.values(), clip_id],
+        )
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # フォルダ
     # ------------------------------------------------------------------

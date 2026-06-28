@@ -2,6 +2,19 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 2: ライブラリ一覧UI・メタ補完）
+
+- `core/metadata.py`（ffprobe）/ `core/thumbnails.py`（ffmpeg）/
+  `core/enrich_worker.py`（補完用 QThread）を追加。`database.py` に
+  `update_metadata()` を追加。
+- `ui/library_view.py`（`LibraryView`: 詳細表/サムネイル切替・タイトル検索・
+  ダブルクリック再生・欠落表示）を追加。
+- `ui/main_window.py` を Download / Library のタブ構成へ再編し、Enrich/Refresh/
+  再生を配線。
+- `AppSettings`/`LibraryManager` を `QSettings()`（アプリスコープ）に変更して
+  テスト隔離を可能に（本番のレジストリ保存は不変）。
+- ffprobe/ffmpeg を実呼びする Phase 2 テストと既存テストが全通過。
+
 ## 2026-06-28（Phase 1: DB基盤・ライブラリ管理・自動登録）
 
 - `core/models.py` / `core/database.py`（SQLite スキーマ v1・WAL・DAO）/
