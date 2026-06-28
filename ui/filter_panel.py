@@ -8,9 +8,10 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import PurePosixPath
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -86,10 +87,13 @@ class FilterPanel(QWidget):
     open_folder_requested = Signal(str)      # フォルダ（絶対パス）
     library_changed = Signal()               # 構成が変わった（一覧を更新させる）
 
+    _EXPANDED_KEY = "ui/expanded_folders"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._library = None
         self._db = None
+        self._settings = QSettings()   # 開閉状態の永続化（data/ へリダイレクト済み）
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -105,6 +109,8 @@ class FilterPanel(QWidget):
         self._tree.itemDoubleClicked.connect(self._on_double_clicked)
         self._tree.clip_dropped.connect(self._on_clip_dropped)
         self._tree.delete_requested.connect(self._delete_clips)
+        self._tree.itemExpanded.connect(self._on_expand_changed)
+        self._tree.itemCollapsed.connect(self._on_expand_changed)
         layout.addWidget(self._tree, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -156,7 +162,12 @@ class FilterPanel(QWidget):
                     citem.setForeground(0, Qt.GlobalColor.gray)
                 parent_item.addChild(citem)
 
-        root_item.setExpanded(True)
+        # 開閉状態を復元（ルートは常に開く）。signals は block 中なので再保存されない。
+        expanded = self._expanded_set()
+        for rel, item in items.items():
+            if rel == "" or rel in expanded:
+                item.setExpanded(True)
+
         self._tree.addTopLevelItem(self._make_item("Missing files", "missing"))
 
         # --- タグ（横断分類） ---
@@ -169,6 +180,47 @@ class FilterPanel(QWidget):
 
         self._tree.setCurrentItem(root_item)
         self._tree.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # フォルダ開閉状態の永続化（QSettings、ライブラリごと）
+    # ------------------------------------------------------------------
+
+    def _iter_folder_items(self):
+        stack = [self._tree.topLevelItem(i) for i in range(self._tree.topLevelItemCount())]
+        while stack:
+            it = stack.pop()
+            if it.data(0, _ROLE_KIND) == "folder":
+                yield it
+            stack.extend(it.child(k) for k in range(it.childCount()))
+
+    def _load_expanded_map(self) -> dict:
+        raw = self._settings.value(self._EXPANDED_KEY, "", type=str)
+        try:
+            return json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def _expanded_set(self) -> set:
+        if self._library is None:
+            return set()
+        return set(self._load_expanded_map().get(str(self._library.root), []))
+
+    def _persist_expanded(self) -> None:
+        if self._library is None:
+            return
+        # ルート("")以外の、開いている実フォルダの rel を保存
+        expanded = [
+            it.data(0, _ROLE_ID)
+            for it in self._iter_folder_items()
+            if it.isExpanded() and it.data(0, _ROLE_ID)
+        ]
+        m = self._load_expanded_map()
+        m[str(self._library.root)] = expanded
+        self._settings.setValue(self._EXPANDED_KEY, json.dumps(m))
+
+    def _on_expand_changed(self, item) -> None:
+        if item is not None and item.data(0, _ROLE_KIND) == "folder":
+            self._persist_expanded()
 
     def _make_item(self, label: str, kind: str, item_id=None) -> QTreeWidgetItem:
         item = QTreeWidgetItem([label])

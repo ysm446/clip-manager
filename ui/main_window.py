@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         # --- Download queue ---
         self._queue = DownloadQueue()
         self._queue.download_succeeded.connect(self._on_download_succeeded)
+        self._queue.queue_idle.connect(self._auto_rescan)
         self._init_ui()
         self._load_active_library()
         self._restore_geometry()
@@ -162,6 +163,7 @@ class MainWindow(QMainWindow):
         else:
             self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
             self._library_view.refresh()
+            self._filter_panel.rebuild()   # ツリーに新ファイルを反映（開閉状態は保持）
             self._update_library_status()
 
     # ------------------------------------------------------------------
@@ -233,12 +235,25 @@ class MainWindow(QMainWindow):
             self._load_active_library()
 
     @Slot()
+    def _auto_rescan(self) -> None:
+        """ダウンロードキューが空になったら静かにリスキャンする。"""
+        if self._active_lib is None:
+            return
+        if self._scan_worker and self._scan_worker.isRunning():
+            return
+        self._on_log("[Library] Downloads finished — rescanning...")
+        self._start_scan_worker()
+
+    @Slot()
     def _rescan_library(self) -> None:
         if self._active_lib is None:
             QMessageBox.information(self, "No library", "Open a library before scanning.")
             return
         if self._scan_worker and self._scan_worker.isRunning():
             return
+        self._start_scan_worker()
+
+    def _start_scan_worker(self) -> None:
         self._scan_worker = ScanWorker(str(self._active_lib.root), self._active_lib.name)
         self._scan_worker.log_message.connect(self._on_log)
         self._scan_worker.progress.connect(
