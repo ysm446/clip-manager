@@ -2,6 +2,16 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（設定の保存先を data/ に集約）
+
+- `core/config.py` を追加。`configure_settings_storage()` で QSettings の保存先を
+  **開発中はプロジェクト直下の `data/`**（`data/ClipManager/Clip Manager.ini`）に
+  向ける。ルートパス登録（LibraryManager）・DL設定・ウィンドウ位置（AppSettings）が
+  ここに集約される。
+- 配布時は `CLIP_MANAGER_PORTABLE=0` で OS 標準の場所へ戻せる
+  （`CLIP_MANAGER_DATA_DIR` で上書き可）。`main.py` から呼び出し。
+- `.gitignore` に `data/` を追加（マシン依存のパスを含むため追跡しない）。
+
 ## 2026-06-28（Phase 3: 整理・検索 フォルダ/タグ）
 
 - `core/database.py`: `list_clips` に `tag_id`/`missing_only` フィルタ、`rename_tag`。

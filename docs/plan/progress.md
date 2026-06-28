@@ -103,3 +103,6 @@
 - QtMultimedia のコーデック対応は Phase 5 で実機確認が必要（未検証）。
 - GUI は **PySide を継続**する方針で確定（将来のローカルLLM分析も PySide のまま、
   推論を分離して追加する）。Electron へは移行しない。
+- 設定（ルートパス登録・DL設定・ウィンドウ位置）は開発中 `data/` に保存
+  （`core/config.py`）。配布時は `CLIP_MANAGER_PORTABLE=0` で OS 標準へ。`data/` は
+  gitignore。

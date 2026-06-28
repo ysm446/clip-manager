@@ -73,8 +73,15 @@ Library タブは `QSplitter[FilterPanel | LibraryView]`。最終的に右へ動
 ## 設定の永続化
 
 - `QSettings()`（引数なし）を使用。`main.py` が org=`ClipManager` /
-  app=`Clip Manager` を設定するため、Windows ではレジストリのその場所に保存される。
-  テストでは `QSettings.setDefaultFormat(Ini)`＋`setPath` で一時ファイルへ隔離できる。
+  app=`Clip Manager` を設定する。
+- **保存先**: `core/config.py` の `configure_settings_storage()` が `main.py` で
+  呼ばれ、**開発中はプロジェクト直下の `data/`**（`data/ClipManager/Clip Manager.ini`）
+  へ保存する。`AppSettings`（DL設定・ウィンドウ位置）と `LibraryManager`
+  （ライブラリのルートパス登録）の両方がここに集約される。
+  - **配布時**: `CLIP_MANAGER_PORTABLE=0` で OS 標準の場所（Windows はレジストリ）に
+    戻す。`CLIP_MANAGER_DATA_DIR` で保存先を上書きも可能。
+  - `data/` は `.gitignore` 対象（マシン依存のパスを含むため追跡しない）。
+  - テストでは `QSettings.setDefaultFormat(Ini)`＋`setPath` で一時ファイルへ隔離。
 - ダウンロード既定値: 保存形式 `MP4` / 画質 `720p` / コーデック `H.264` / 字幕 `True`。
 - ライブラリのレジストリ（登録一覧＋アクティブ）も QSettings に JSON で保持する。
 

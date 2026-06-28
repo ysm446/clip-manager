@@ -64,6 +64,10 @@ downloads/
 *.sqlite
 *.sqlite3
 
+# ===== 開発用の設定保存先（QSettings の INI。マシン依存のパスを含む） =====
+# 配布時は OS 標準の場所へ移すため、このフォルダは追跡しない（core/config.py）
+data/
+
 # ===== ログ・キャッシュ・ユーザー設定 =====
 *.log
 logs/
