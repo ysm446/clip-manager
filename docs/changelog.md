@@ -2,6 +2,15 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 6: 仕上げ）
+
+- `ui/filter_panel.py`: 空状態の案内（ライブラリ未選択／クリップ0件のヒント）。
+- `core/scan_worker.py` / `core/enrich_worker.py`: 例外処理を追加し、失敗時も
+  finished シグナルを出して UI を止めない。
+- `README.md` を現行アプリ（エクスプローラ/プレイヤー/詳細・DLキュー）に全面刷新。
+- 実ライブラリ "Youtube"（Violin/ 4本・非ASCIIファイル名・最大1.3GB・サブフォルダ）で
+  scan/missing を通し確認。
+
 ## 2026-06-28（UI状態の永続化: 詳細開閉・ペイン分割サイズ）
 
 - `core/settings.py`: `details_expanded` と `save_splitter`/`load_splitter` を追加。

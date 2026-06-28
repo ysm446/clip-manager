@@ -28,9 +28,10 @@ class ScanWorker(QThread):
             self.log_message.emit(f"Scanning: {self._root}")
             added = lib.scan(db, progress_cb=lambda n, p: self.progress.emit(n, str(p)))
             missing = lib.refresh_missing(db)
+            self.log_message.emit(f"Scan complete: {added} new, {missing} missing.")
             self.finished_scan.emit(added, missing)
-            self.log_message.emit(
-                f"Scan complete: {added} new, {missing} missing."
-            )
+        except Exception as e:                      # 走査失敗で UI を止めない
+            self.log_message.emit(f"[ERROR] Scan failed: {e}")
+            self.finished_scan.emit(0, 0)
         finally:
             db.close()

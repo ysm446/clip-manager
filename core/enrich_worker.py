@@ -82,7 +82,10 @@ class EnrichWorker(QThread):
                     self.clip_updated.emit(clip.id)
                 self.progress.emit(i, total)
 
-            self.finished_enrich.emit(updated)
             self.log_message.emit(f"Enrich complete: {updated} clip(s) updated.")
+            self.finished_enrich.emit(updated)
+        except Exception as e:                      # 補完失敗で UI を止めない
+            self.log_message.emit(f"[ERROR] Enrich failed: {e}")
+            self.finished_enrich.emit(0)
         finally:
             db.close()

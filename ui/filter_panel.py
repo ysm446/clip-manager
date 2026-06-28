@@ -181,6 +181,12 @@ class FilterPanel(QWidget):
 
         layout.addWidget(self._stack, stretch=1)
 
+        # 空状態の案内
+        self._hint = QLabel("")
+        self._hint.setWordWrap(True)
+        self._hint.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(self._hint)
+
         btn_row = QHBoxLayout()
         self._new_folder_btn = QPushButton("New Folder")
         self._new_folder_btn.clicked.connect(self._new_folder)
@@ -209,6 +215,22 @@ class FilterPanel(QWidget):
     def rebuild(self) -> None:
         self._rebuild_tree()
         self._populate_icons()
+        self._update_hint()
+
+    def _update_hint(self) -> None:
+        if self._library is None:
+            self._hint.setText(
+                "ライブラリがありません。メニュー Library →"
+                " 「Open / Create Library...」で開いてください。"
+            )
+        elif self._db is not None and self._db.count_clips() == 0:
+            self._hint.setText(
+                "クリップがありません。フォルダを右クリック →「Download here...」、"
+                "または既存ファイルがあれば Library →「Rescan Library」。"
+            )
+        else:
+            self._hint.setText("")
+        self._hint.setVisible(bool(self._hint.text()))
 
     def _rebuild_tree(self) -> None:
         self._tree.blockSignals(True)
