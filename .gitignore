@@ -1,0 +1,77 @@
+# ===== IDE / エディタ =====
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ===== 仮想環境 =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== ローカルLLM（将来構想 / plan.md §7） =====
+# モデル本体（GGUF 等・大容量）。.gitkeep だけ残す
+models/
+!models/.gitkeep
+# llama.cpp 等のランタイム（バージョンごと）。.gitkeep だけ残す
+runtime/
+!runtime/.gitkeep
+
+# ===== ダウンロード・メディア成果物 =====
+# アプリが生成する動画/音声/サムネイル等はリポジトリに含めない
+downloads/
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.mp3
+*.wav
+*.flac
+*.aac
+*.srt
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# ===== ライブラリのメタデータ（各ライブラリのルート直下） =====
+# ※ 通常はリポジトリ外に置かれるが、誤コミット防止のため無視する
+.clipmanager/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ===== ログ・キャッシュ・ユーザー設定 =====
+*.log
+logs/
+.cache/
+.env
+settings.json
+
+# ===== OS固有 =====
+.DS_Store
+Thumbs.db
+desktop.ini
