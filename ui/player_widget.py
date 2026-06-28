@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl, QSize
+from PySide6.QtCore import Qt, Signal, QUrl, QSize, QSettings
 from PySide6.QtGui import QFont, QPainter, QColor, QIcon, QPixmap, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QPushButton,
+    QToolButton,
     QSlider,
     QLabel,
     QComboBox,
@@ -123,6 +124,8 @@ class PlayerWidget(QWidget):
 
     _SPEEDS = ["0.5×", "0.75×", "1.0×", "1.25×", "1.5×", "2.0×"]
 
+    _BM_KEY = "ui/bookmarks_expanded"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cues = []
@@ -130,6 +133,7 @@ class PlayerWidget(QWidget):
         self._clip_id = None
         self._library = None
         self._markers = []
+        self._settings = QSettings()
         self._init_ui()
         self._init_player()
 
@@ -200,6 +204,14 @@ class PlayerWidget(QWidget):
 
         # ブックマーク行
         bm_row = QHBoxLayout()
+        self._bm_toggle = QToolButton()
+        self._bm_toggle.setText("Bookmarks")
+        self._bm_toggle.setAutoRaise(True)
+        self._bm_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self._bm_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._bm_toggle.setToolTip("ブックマーク一覧を開閉（動画を広く使えます）")
+        self._bm_toggle.clicked.connect(self._toggle_bookmarks)
+        bm_row.addWidget(self._bm_toggle)
         self._bm_add_btn = QPushButton("＋ Bookmark (B)")
         self._bm_add_btn.setToolTip("現在位置にブックマークを追加")
         self._bm_add_btn.clicked.connect(self._request_add_bookmark)
@@ -235,6 +247,10 @@ class PlayerWidget(QWidget):
         self._bm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_B), self)
         self._bm_shortcut.activated.connect(self._request_add_bookmark)
         self._update_bookmark_enabled()
+
+        # 開閉状態を復元
+        self._bm_expanded = self._settings.value(self._BM_KEY, True, type=bool)
+        self._apply_bookmark_visibility()
 
     def _init_player(self) -> None:
         self._player = QMediaPlayer(self)
@@ -309,6 +325,17 @@ class PlayerWidget(QWidget):
         has_marks = bool(self._markers)
         self._bm_prev_btn.setEnabled(has_marks)
         self._bm_next_btn.setEnabled(has_marks)
+
+    def _toggle_bookmarks(self) -> None:
+        self._bm_expanded = not self._bm_expanded
+        self._apply_bookmark_visibility()
+        self._settings.setValue(self._BM_KEY, self._bm_expanded)
+
+    def _apply_bookmark_visibility(self) -> None:
+        self._bm_list.setVisible(self._bm_expanded)
+        self._bm_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if self._bm_expanded else Qt.ArrowType.RightArrow
+        )
 
     def _request_add_bookmark(self) -> None:
         if self._clip_id is not None:
