@@ -4,7 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -32,12 +31,6 @@ class ClipDetailsPanel(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
-
-        self._thumb = QLabel()
-        self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._thumb.setFixedHeight(150)
-        self._thumb.setStyleSheet("background: #1e1e1e; border-radius: 4px;")
-        outer.addWidget(self._thumb)
 
         self._title = QLabel("No clip selected")
         self._title.setWordWrap(True)
@@ -71,8 +64,6 @@ class ClipDetailsPanel(QWidget):
 
     def clear(self) -> None:
         self._title.setText("No clip selected")
-        self._thumb.clear()
-        self._thumb.setText("")
         for v in self._fields.values():
             v.setText("—")
 
@@ -81,20 +72,6 @@ class ClipDetailsPanel(QWidget):
             self.clear()
             return
         self._title.setText(clip.title + ("   [missing]" if clip.missing else ""))
-
-        # サムネイル
-        self._thumb.clear()
-        pix = None
-        if clip.thumbnail_path and self._library is not None:
-            tp = self._library.to_abs(clip.thumbnail_path)
-            if Path(tp).is_file():
-                p = QPixmap(str(tp))
-                if not p.isNull():
-                    pix = p.scaledToHeight(150, Qt.TransformationMode.SmoothTransformation)
-        if pix is not None:
-            self._thumb.setPixmap(pix)
-        else:
-            self._thumb.setText("(no thumbnail)")
 
         folder = str(Path(clip.rel_path).parent)
         if folder == ".":
