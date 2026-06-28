@@ -27,6 +27,9 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QStyle,
     QMenu,
+    QInputDialog,
+    QFileDialog,
+    QMessageBox,
 )
 
 _DETAILS, _THUMBS = 0, 1
@@ -63,6 +66,7 @@ class LibraryView(QWidget):
     play_requested = Signal(str)        # 絶対パス
     enrich_requested = Signal()
     open_location_requested = Signal(str)
+    library_modified = Signal()         # ファイル操作でクリップ件数等が変わった
 
     _COLUMNS = ["Title", "Duration", "Resolution", "Size", "Type", "Added"]
 
@@ -307,7 +311,70 @@ class LibraryView(QWidget):
                     lambda checked, tid=tag.id: self._toggle_tag(clip_id, tid, checked)
                 )
 
+        # --- file operations ---
+        menu.addSeparator()
+        menu.addAction("Rename...").triggered.connect(lambda: self._rename_clip(clip_id))
+        menu.addAction("Move to folder...").triggered.connect(lambda: self._move_clip(clip_id))
+        menu.addAction("Duplicate").triggered.connect(lambda: self._duplicate_clip(clip_id))
+        menu.addAction("Delete...").triggered.connect(lambda: self._delete_clip(clip_id))
+
         menu.exec(global_pos)
+
+    # ------------------------------------------------------------------
+    # File operations（実ファイル＋DB を Library 経由で更新）
+    # ------------------------------------------------------------------
+
+    def _file_op(self, fn) -> bool:
+        """ファイル操作を実行し、失敗時は警告を出す。成功で True。"""
+        try:
+            fn()
+            return True
+        except Exception as e:
+            QMessageBox.warning(self, "File operation failed", str(e))
+            return False
+
+    def _rename_clip(self, clip_id) -> None:
+        clip = self._by_id.get(clip_id)
+        if clip is None:
+            return
+        current = Path(clip.rel_path).stem
+        name, ok = QInputDialog.getText(
+            self, "Rename", "New name (without extension):", text=current
+        )
+        if not (ok and name.strip()):
+            return
+        if self._file_op(lambda: self._library.rename_clip(self._db, clip_id, name)):
+            self.refresh()
+            self.library_modified.emit()
+
+    def _move_clip(self, clip_id) -> None:
+        dest = QFileDialog.getExistingDirectory(
+            self, "Move into folder (inside the library)", str(self._library.root)
+        )
+        if not dest:
+            return
+        if self._file_op(lambda: self._library.move_clip(self._db, clip_id, dest)):
+            self.refresh()
+            self.library_modified.emit()
+
+    def _duplicate_clip(self, clip_id) -> None:
+        if self._file_op(lambda: self._library.duplicate_clip(self._db, clip_id)):
+            self.refresh()
+            self.library_modified.emit()
+
+    def _delete_clip(self, clip_id) -> None:
+        clip = self._by_id.get(clip_id)
+        if clip is None:
+            return
+        if QMessageBox.question(
+            self, "Delete",
+            f"Send '{clip.title}' to the Recycle Bin?\n"
+            "（実ファイルと字幕・サムネイルを削除し、ライブラリからも除外します。）",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        if self._file_op(lambda: self._library.delete_clip(self._db, clip_id, to_trash=True)):
+            self.refresh()
+            self.library_modified.emit()
 
     def _set_folder(self, clip_id, folder_id) -> None:
         self._db.set_clip_folder(clip_id, folder_id)

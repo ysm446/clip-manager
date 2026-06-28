@@ -256,6 +256,18 @@ class LibraryDatabase:
         )
         self._conn.commit()
 
+    def update_title(self, clip_id: int, title: str) -> None:
+        self._conn.execute(
+            "UPDATE clips SET title = ? WHERE id = ?", (title, clip_id)
+        )
+        self._conn.commit()
+
+    def update_subtitle_path(self, clip_id: int, subtitle_path: str | None) -> None:
+        self._conn.execute(
+            "UPDATE clips SET subtitle_path = ? WHERE id = ?", (subtitle_path, clip_id)
+        )
+        self._conn.commit()
+
     def mark_played(self, clip_id: int) -> None:
         self._conn.execute(
             "UPDATE clips SET play_count = play_count + 1, last_played_at = ? WHERE id = ?",

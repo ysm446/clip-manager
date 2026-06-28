@@ -2,6 +2,16 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 4: ファイル操作）
+
+- `core/library.py`: `rename_clip`/`move_clip`/`duplicate_clip`/`delete_clip` を追加。
+  実ファイル・字幕サイドカー・DB を一括更新。削除は Send2Trash でゴミ箱へ（失敗時は
+  永久削除フォールバック）。ライブラリ外移動・不正名・同名衝突を拒否。
+- `core/database.py`: `update_title`/`update_subtitle_path` を追加。
+- `ui/library_view.py`: 右クリックに Rename/Move/Duplicate/Delete、`library_modified`。
+- `requirements.txt`: `Send2Trash==2.1.0` を追加。
+- Phase 4/既存テスト全通過。
+
 ## 2026-06-28（設定の保存先を data/ に集約）
 
 - `core/config.py` を追加。`configure_settings_storage()` で QSettings の保存先を

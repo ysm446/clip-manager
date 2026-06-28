@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         self._library_view.play_requested.connect(self._play_clip)
         self._library_view.enrich_requested.connect(self._enrich_library)
         self._library_view.open_location_requested.connect(self._open_location)
+        self._library_view.library_modified.connect(self._update_library_status)
         self._filter_panel.filter_changed.connect(self._on_filter_changed)
         self._filter_panel.library_changed.connect(self._library_view.refresh)
 

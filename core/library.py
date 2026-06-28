@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -159,3 +160,161 @@ class Library:
             if not exists:
                 missing += 1
         return missing
+
+    # ------------------------------------------------------------------
+    # ファイル操作（実ファイルと DB を一括更新）
+    # ------------------------------------------------------------------
+
+    def _sidecar_subtitle(self, clip: Clip) -> Path | None:
+        """クリップに紐づく字幕サイドカーの絶対パス（存在すれば）。"""
+        if clip.subtitle_path:
+            p = self.to_abs(clip.subtitle_path)
+            return p if p.is_file() else None
+        return None
+
+    def rename_clip(self, db: LibraryDatabase, clip_id: int, new_stem: str) -> str:
+        """クリップのファイル名（拡張子を除く部分）を変更する。
+
+        同じディレクトリ内でリネームし、DB の rel_path / title と字幕サイドカーも
+        追従させる。戻り値は新しい rel_path。失敗時は例外。
+        """
+        new_stem = new_stem.strip()
+        if not new_stem or any(c in new_stem for c in '\\/:*?"<>|'):
+            raise ValueError("ファイル名に使用できない文字が含まれています。")
+        clip = db.get_clip(clip_id)
+        if clip is None:
+            raise ValueError("クリップが見つかりません。")
+        src = self.to_abs(clip.rel_path)
+        if not src.is_file():
+            raise FileNotFoundError("元ファイルが見つかりません。")
+        dst = src.with_name(new_stem + src.suffix)
+        if dst.exists():
+            raise FileExistsError(f"同名のファイルが既に存在します: {dst.name}")
+
+        # 字幕サイドカー（タイトルと同じ stem の場合のみ追従）
+        sub = self._sidecar_subtitle(clip)
+        new_sub_rel = clip.subtitle_path
+        if sub is not None and sub.name.startswith(src.stem):
+            new_sub = sub.with_name(new_stem + sub.name[len(src.stem):])
+            sub.rename(new_sub)
+            new_sub_rel = self.to_rel(new_sub)
+
+        src.rename(dst)
+        new_rel = self.to_rel(dst)
+        db.update_clip_path(clip_id, new_rel)
+        db.update_title(clip_id, new_stem)
+        if new_sub_rel != clip.subtitle_path:
+            db.update_subtitle_path(clip_id, new_sub_rel)
+        return new_rel
+
+    def move_clip(self, db: LibraryDatabase, clip_id: int, dest_dir: str | Path) -> str:
+        """クリップの実ファイルをライブラリ内の別ディレクトリへ移動する。
+
+        dest_dir はライブラリ内であること。DB の rel_path と字幕サイドカーも追従。
+        戻り値は新しい rel_path。
+        """
+        clip = db.get_clip(clip_id)
+        if clip is None:
+            raise ValueError("クリップが見つかりません。")
+        dest = Path(dest_dir).resolve()
+        if not self.is_inside(dest):
+            raise ValueError("移動先がライブラリの外です。")
+        dest.mkdir(parents=True, exist_ok=True)
+        src = self.to_abs(clip.rel_path)
+        if not src.is_file():
+            raise FileNotFoundError("元ファイルが見つかりません。")
+        dst = dest / src.name
+        if dst.exists():
+            raise FileExistsError(f"移動先に同名のファイルが既に存在します: {dst.name}")
+
+        sub = self._sidecar_subtitle(clip)
+        new_sub_rel = clip.subtitle_path
+        if sub is not None:
+            new_sub = dest / sub.name
+            if new_sub.exists():
+                raise FileExistsError(f"移動先に同名の字幕が既に存在します: {new_sub.name}")
+
+        shutil.move(str(src), str(dst))
+        if sub is not None:
+            shutil.move(str(sub), str(dest / sub.name))
+            new_sub_rel = self.to_rel(dest / sub.name)
+
+        new_rel = self.to_rel(dst)
+        db.update_clip_path(clip_id, new_rel)
+        if new_sub_rel != clip.subtitle_path:
+            db.update_subtitle_path(clip_id, new_sub_rel)
+        return new_rel
+
+    def duplicate_clip(self, db: LibraryDatabase, clip_id: int) -> int:
+        """実ファイルを複製し、新しいクリップとして登録する。戻り値は新 id。"""
+        clip = db.get_clip(clip_id)
+        if clip is None:
+            raise ValueError("クリップが見つかりません。")
+        src = self.to_abs(clip.rel_path)
+        if not src.is_file():
+            raise FileNotFoundError("元ファイルが見つかりません。")
+
+        # "name (copy).ext" / 衝突時は連番
+        base = f"{src.stem} (copy)"
+        candidate = src.with_name(base + src.suffix)
+        n = 2
+        while candidate.exists():
+            candidate = src.with_name(f"{src.stem} (copy {n}){src.suffix}")
+            n += 1
+        shutil.copy2(src, candidate)
+
+        new_clip = Clip(
+            rel_path=self.to_rel(candidate),
+            title=candidate.stem,
+            source_url=clip.source_url,
+            duration=clip.duration,
+            filesize=candidate.stat().st_size,
+            width=clip.width,
+            height=clip.height,
+            container=clip.container,
+            vcodec=clip.vcodec,
+            folder_id=clip.folder_id,
+            downloaded_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        return db.upsert_clip(new_clip)
+
+    def delete_clip(
+        self, db: LibraryDatabase, clip_id: int, to_trash: bool = True
+    ) -> None:
+        """クリップの実ファイル（＋字幕・サムネ）を削除し DB レコードも消す。
+
+        ``to_trash=True`` ならゴミ箱へ送る（Send2Trash）。利用不可・失敗時は
+        永久削除にフォールバックする。
+        """
+        clip = db.get_clip(clip_id)
+        if clip is None:
+            return
+        targets: list[Path] = []
+        media = self.to_abs(clip.rel_path)
+        if media.is_file():
+            targets.append(media)
+        sub = self._sidecar_subtitle(clip)
+        if sub is not None:
+            targets.append(sub)
+        if clip.thumbnail_path:
+            thumb = self.to_abs(clip.thumbnail_path)
+            if thumb.is_file():
+                targets.append(thumb)
+
+        for path in targets:
+            self._remove_path(path, to_trash)
+        db.delete_clip(clip_id)
+
+    @staticmethod
+    def _remove_path(path: Path, to_trash: bool) -> None:
+        if to_trash:
+            try:
+                from send2trash import send2trash
+                send2trash(str(path))
+                return
+            except Exception:
+                pass  # ゴミ箱が使えなければ永久削除へフォールバック
+        try:
+            path.unlink()
+        except OSError:
+            pass

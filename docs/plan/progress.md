@@ -4,14 +4,25 @@
 
 ## 現在地（サマリ）
 
-- **フェーズ**: Phase 3 完了。次は Phase 4（ファイル操作：リネーム/移動/削除/複製）。
-- **状態**: Library タブを [左：フォルダ/タグツリー｜中央：一覧] の QSplitter 構成に。
-  フォルダ/タグの作成・改名・削除、選択での絞り込み、クリップへのフォルダ/タグ付与
-  （右クリック）を実装。デフォルトウィンドウを 1280×800 に拡大。
+- **フェーズ**: Phase 4 完了。次は Phase 5（アプリ内プレイヤー）。
+- **状態**: クリップの右クリックから リネーム / 移動 / 複製 / 削除 を実装。実ファイル・
+  字幕サイドカー・DB を一括更新。削除は既定でゴミ箱（Send2Trash）。
 - **UI 像（恒久）**: 最終的に ~1920×1080 で 階層／サムネイル／動画再生 を一画面に
   （plan.md「UI レイアウト像」参照）。右ペインのプレイヤーは Phase 5。
 
 ## 完了済み
+
+- 2026-06-28: **Phase 4 完了**。
+  - `core/library.py`: `rename_clip` / `move_clip` / `duplicate_clip` /
+    `delete_clip(to_trash)` を追加。実ファイルと字幕サイドカー、DB の rel_path/
+    title/subtitle_path を一括更新。移動先のライブラリ外・不正名・同名衝突を拒否。
+    削除はゴミ箱（Send2Trash）→失敗時は永久削除フォールバック。
+  - `core/database.py`: `update_title` / `update_subtitle_path` を追加。
+  - `ui/library_view.py`: 右クリックに Rename/Move/Duplicate/Delete を追加。
+    失敗時は警告ダイアログ。`library_modified` シグナルで件数表示を更新。
+  - `requirements.txt`: `Send2Trash==2.1.0` を追加。
+  - 検証: Phase 4 テスト（rename/move/duplicate/delete・字幕追従・ゴミ箱・各種拒否）
+    と既存全スイートが通過。
 
 - 2026-06-28: **Phase 3 完了**。
   - `core/database.py`: `list_clips` に `tag_id` / `missing_only` フィルタを追加。
@@ -87,9 +98,11 @@
       ffmpeg サムネイル生成。Download/Library タブ構成。テスト検証済み。
 - [x] **Phase 3**: フォルダ/タグツリー＋絞り込み＋付与（右クリック）。
       Library タブを QSplitter 構成に。テスト検証済み。
-- [ ] **Phase 4**: ファイル操作（リネーム/移動/削除/複製）。実ファイルと DB を
-      一括更新。削除は既定でゴミ箱へ（send2trash 採否を検討）。
-- [ ] **Phase 5**: `ui/player_widget.py`（アプリ内プレイヤー・字幕）。
+- [x] **Phase 4**: ファイル操作（リネーム/移動/複製/削除）。実ファイル・字幕・DB を
+      一括更新。削除は Send2Trash でゴミ箱へ。テスト検証済み。
+- [ ] **Phase 5**: `ui/player_widget.py`（アプリ内プレイヤー・字幕）。Library タブの
+      右ペインに配置し、~1920×1080 一画面の目標レイアウトへ。QtMultimedia の
+      コーデック対応を実機確認。
 - [ ] **Phase 6**: 欠落検知・空状態・エラー処理・動作確認・docs更新。
 - [ ] **Phase 7+（将来構想）**: ローカルLLM分析。GUI は PySide 継続、推論は
       分離ワーカー/プロセス、結果は SQLite に取り込む。Phase 6 完了後に詳細化。
