@@ -1,14 +1,14 @@
-"""左ペインの階層ツリー（実フォルダ ＋ タグ ＋ 欠落）。
+"""左ペインの階層ツリー（実フォルダ ＋ その中のファイル ＋ タグ ＋ 欠落）。
 
-フォルダ階層は **ライブラリルート配下の実ディレクトリ**を表す。選択が変わると
-``filter_changed(dict)`` を emit する::
-
-    {"folder_path": str|None, "tag_id": int|None, "missing_only": bool}
-
-フォルダ右クリックから「ここにダウンロード」「新規サブフォルダ」「名前変更」
-「エクスプローラで開く」を行える。タグは DB の tags を使う（横断分類）。
+- フォルダ階層は**ライブラリルート配下の実ディレクトリ**を表し、各フォルダ配下の
+  クリップ（ファイル）もツリーに表示する。
+- **ファイルを別フォルダへドラッグ&ドロップで移動**できる（実ファイル＋DB を更新）。
+- フォルダ選択で一覧を絞り込み（``filter_changed``）、ファイルのダブルクリックで
+  再生（``clip_activated``）。フォルダ右クリックから DL/作成/改名/Explorer。
 """
 from __future__ import annotations
+
+from pathlib import PurePosixPath
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -22,17 +22,56 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QMenu,
     QStyle,
+    QAbstractItemView,
 )
 
-_ROLE_KIND = Qt.ItemDataRole.UserRole       # "folder" | "tag" | "missing" | "header"
-_ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder=rel path(str, ""=root) / tag=id(int)
+_ROLE_KIND = Qt.ItemDataRole.UserRole       # "folder" | "clip" | "tag" | "missing" | "header"
+_ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder=rel(str,""=root) / clip=id(int) / tag=id(int)
+
+
+class _FolderTree(QTreeWidget):
+    """フォルダへのクリップ D&D 移動に対応したツリー。"""
+
+    clip_dropped = Signal(int, str)   # (clip_id, dest_folder_rel)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+    def dropEvent(self, event) -> None:
+        target = self.itemAt(event.position().toPoint())
+        # ドロップ先がファイル等なら親フォルダまで遡る
+        while target is not None and target.data(0, _ROLE_KIND) != "folder":
+            target = target.parent()
+        if target is None:
+            event.ignore()
+            return
+        dest_rel = target.data(0, _ROLE_ID) or ""
+        # ドロップ前に id を確定（rebuild で item が破棄されても安全なように）
+        ids = [
+            int(it.data(0, _ROLE_ID))
+            for it in self.selectedItems()
+            if it.data(0, _ROLE_KIND) == "clip"
+        ]
+        if not ids:
+            event.ignore()
+            return
+        # 既定の move（モデル改変）はせず、自前で移動 → rebuild する
+        event.accept()
+        for clip_id in ids:
+            self.clip_dropped.emit(clip_id, dest_rel)
 
 
 class FilterPanel(QWidget):
     filter_changed = Signal(dict)
+    clip_activated = Signal(int)             # ファイルのダブルクリック（再生）
     download_here_requested = Signal(str)    # 保存先（絶対パス）
     open_folder_requested = Signal(str)      # フォルダ（絶対パス）
-    library_changed = Signal()               # フォルダ/タグ構成が変わった
+    library_changed = Signal()               # 構成が変わった（一覧を更新させる）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,11 +84,13 @@ class FilterPanel(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        self._tree = QTreeWidget()
+        self._tree = _FolderTree()
         self._tree.setHeaderHidden(True)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.currentItemChanged.connect(self._on_selection_changed)
+        self._tree.itemDoubleClicked.connect(self._on_double_clicked)
+        self._tree.clip_dropped.connect(self._on_clip_dropped)
         layout.addWidget(self._tree, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -78,24 +119,33 @@ class FilterPanel(QWidget):
             self._tree.blockSignals(False)
             return
 
-        # 実フォルダのルート（= ライブラリ）。選択で全件表示。
+        # --- 実フォルダ（ルート＝ライブラリ。選択で全件） ---
         root_item = self._make_item(f"{self._library.name}  (all)", "folder", "")
-        root_item.setIcon(0, self._dir_icon())
         self._tree.addTopLevelItem(root_item)
         items = {"": root_item}
         for rel in self._library.list_dirs():
             parts = rel.split("/")
-            parent_rel = "/".join(parts[:-1])
-            parent_item = items.get(parent_rel, root_item)
+            parent_item = items.get("/".join(parts[:-1]), root_item)
             item = self._make_item(parts[-1], "folder", rel)
-            item.setIcon(0, self._dir_icon())
             parent_item.addChild(item)
             items[rel] = item
-        root_item.setExpanded(True)
 
+        # --- 各フォルダ配下のファイル（クリップ） ---
+        if self._db is not None:
+            for clip in self._db.list_clips(order_by="title ASC"):
+                parent_rel = str(PurePosixPath(clip.rel_path).parent)
+                if parent_rel == ".":
+                    parent_rel = ""
+                parent_item = items.get(parent_rel, root_item)
+                citem = self._make_item(clip.title, "clip", clip.id)
+                if clip.missing:
+                    citem.setForeground(0, Qt.GlobalColor.gray)
+                parent_item.addChild(citem)
+
+        root_item.setExpanded(True)
         self._tree.addTopLevelItem(self._make_item("Missing files", "missing"))
 
-        # タグ（横断分類）
+        # --- タグ（横断分類） ---
         if self._db is not None:
             tags_header = self._make_item("Tags", "header")
             self._tree.addTopLevelItem(tags_header)
@@ -106,20 +156,25 @@ class FilterPanel(QWidget):
         self._tree.setCurrentItem(root_item)
         self._tree.blockSignals(False)
 
-    def _dir_icon(self):
-        return self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-
-    @staticmethod
-    def _make_item(label: str, kind: str, item_id=None) -> QTreeWidgetItem:
+    def _make_item(self, label: str, kind: str, item_id=None) -> QTreeWidgetItem:
         item = QTreeWidgetItem([label])
         item.setData(0, _ROLE_KIND, kind)
         item.setData(0, _ROLE_ID, item_id)
-        if kind == "header":
+        base = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+        if kind == "folder":
+            item.setFlags(base | Qt.ItemFlag.ItemIsDropEnabled)
+            item.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        elif kind == "clip":
+            item.setFlags(base | Qt.ItemFlag.ItemIsDragEnabled)
+            item.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+        elif kind == "header":
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        else:
+            item.setFlags(base)
         return item
 
     # ------------------------------------------------------------------
-    # Selection -> filter
+    # Selection / activation
     # ------------------------------------------------------------------
 
     def _on_selection_changed(self, current, _previous) -> None:
@@ -128,7 +183,6 @@ class FilterPanel(QWidget):
         kind = current.data(0, _ROLE_KIND)
         item_id = current.data(0, _ROLE_ID)
         if kind == "folder":
-            # ルート("")は None（全件）、サブフォルダはその配下。
             self.filter_changed.emit(
                 {"folder_path": item_id or None, "tag_id": None, "missing_only": False}
             )
@@ -140,6 +194,35 @@ class FilterPanel(QWidget):
             self.filter_changed.emit(
                 {"folder_path": None, "tag_id": None, "missing_only": True}
             )
+        # clip 選択はフィルタを変えない（ダブルクリックで再生）
+
+    def _on_double_clicked(self, item, _column) -> None:
+        if item is not None and item.data(0, _ROLE_KIND) == "clip":
+            self.clip_activated.emit(int(item.data(0, _ROLE_ID)))
+
+    # ------------------------------------------------------------------
+    # Drag & drop move
+    # ------------------------------------------------------------------
+
+    def _on_clip_dropped(self, clip_id: int, dest_rel: str) -> None:
+        if self._db is None or self._library is None:
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            return
+        cur = str(PurePosixPath(clip.rel_path).parent)
+        if cur == ".":
+            cur = ""
+        if cur == (dest_rel or ""):
+            return   # 同じフォルダへは何もしない
+        dest_abs = self._library.root if not dest_rel else self._library.to_abs(dest_rel)
+        try:
+            self._library.move_clip(self._db, clip_id, dest_abs)
+        except Exception as e:
+            QMessageBox.warning(self, "Move failed", str(e))
+            return
+        self.rebuild()
+        self.library_changed.emit()
 
     # ------------------------------------------------------------------
     # Folder / Tag 操作
@@ -154,8 +237,8 @@ class FilterPanel(QWidget):
     def _new_folder(self) -> None:
         if self._library is None:
             return
-        kind, rel = self._selected()
-        parent_rel = rel if kind == "folder" else ""   # 選択フォルダ配下、なければルート
+        kind, ident = self._selected()
+        parent_rel = ident if kind == "folder" else ""
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
         if not (ok and name.strip()):
             return
@@ -194,12 +277,16 @@ class FilterPanel(QWidget):
                 lambda: self.download_here_requested.emit(abs_dir)
             )
             menu.addAction("New subfolder...").triggered.connect(self._new_folder)
-            if item_id:   # ルート自体は改名しない
+            if item_id:
                 menu.addAction("Rename...").triggered.connect(
                     lambda: self._rename_folder(item_id)
                 )
             menu.addAction("Open in Explorer").triggered.connect(
                 lambda: self.open_folder_requested.emit(abs_dir)
+            )
+        elif kind == "clip":
+            menu.addAction("Play").triggered.connect(
+                lambda: self.clip_activated.emit(int(item_id))
             )
         elif kind == "tag":
             menu.addAction("Rename...").triggered.connect(

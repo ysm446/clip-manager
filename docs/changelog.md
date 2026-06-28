@@ -2,6 +2,15 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（階層ツリーにファイル表示＋D&D移動）
+
+- `ui/filter_panel.py`: 階層ツリーに各フォルダ配下の**ファイル（クリップ）**を表示。
+  `_FolderTree`（QTreeWidget サブクラス）で**クリップを別フォルダへドラッグ&ドロップ
+  移動**（`move_clip` で実ファイル＋DB を更新→rebuild）。同一フォルダへのドロップは
+  no-op。ファイルのダブルクリック/右クリック「Play」で再生（`clip_activated`）。
+- `ui/main_window.py`: `clip_activated` をアプリ内プレイヤーに配線。
+- テスト（ツリーのファイル表示・D&D移動・同フォルダ no-op）と既存全スイート通過。
+
 ## 2026-06-28（Phase 5: アプリ内プレイヤー）
 
 - `core/subtitles.py`: 外部 `.srt` パーサ（`parse_srt`/`cue_at`）。

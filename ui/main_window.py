@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self._library_view.library_modified.connect(self._update_library_status)
         self._filter_panel.filter_changed.connect(self._on_filter_changed)
         self._filter_panel.library_changed.connect(self._library_view.refresh)
+        self._filter_panel.clip_activated.connect(self._play_clip_id)
         self._filter_panel.download_here_requested.connect(self._open_download_dialog)
         self._filter_panel.open_folder_requested.connect(self._open_folder)
 
@@ -282,6 +283,21 @@ class MainWindow(QMainWindow):
             tag_id=flt.get("tag_id"),
             missing_only=flt.get("missing_only", False),
         )
+
+    @Slot(int)
+    def _play_clip_id(self, clip_id: int) -> None:
+        """ツリーのファイルをアプリ内プレイヤーで再生する。"""
+        if self._db is None or self._active_lib is None:
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            return
+        media = str(self._active_lib.to_abs(clip.rel_path))
+        subtitle = (
+            str(self._active_lib.to_abs(clip.subtitle_path))
+            if clip.subtitle_path else ""
+        )
+        self._player.play(media, subtitle)
 
     @Slot(str)
     def _open_external(self, abs_path: str) -> None:

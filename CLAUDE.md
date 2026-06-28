@@ -45,7 +45,8 @@ core/
   subtitles.py           # parse_srt()/cue_at() — 外部 .srt パーサ（純関数）
 ui/
   main_window.py         # MainWindow — Library/Queue のタブ。Library は3ペイン QSplitter
-  filter_panel.py        # FilterPanel — 実フォルダ/タグツリー・絞り込み・Download here
+  filter_panel.py        # FilterPanel — 実フォルダ/タグツリー(配下ファイルも表示)・
+                         #   D&Dでファイルを別フォルダへ移動・絞り込み・Download here
   library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・付与・再生要求
   player_widget.py       # PlayerWidget — QtMultimedia 動画再生＋.srt オーバーレイ
   download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
