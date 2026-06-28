@@ -72,3 +72,19 @@ class AppSettings:
             self._qs.value("ui/window_geometry"),
             self._qs.value("ui/window_state"),
         )
+
+    # --- UI layout state ---
+
+    @property
+    def details_expanded(self) -> bool:
+        return self._qs.value("ui/details_expanded", True, type=bool)
+
+    @details_expanded.setter
+    def details_expanded(self, v: bool) -> None:
+        self._qs.setValue("ui/details_expanded", bool(v))
+
+    def save_splitter(self, key: str, state: bytes) -> None:
+        self._qs.setValue(f"ui/splitter/{key}", state)
+
+    def load_splitter(self, key: str) -> bytes | None:
+        return self._qs.value(f"ui/splitter/{key}")

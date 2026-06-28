@@ -79,13 +79,13 @@ class MainWindow(QMainWindow):
         self._details_sizes = [520, 300]         # 展開時のサイズ（折りたたみ時に復元）
         self._details.toggled.connect(self._on_details_toggled)
 
-        library_split = QSplitter(Qt.Orientation.Horizontal)
-        library_split.addWidget(self._filter_panel)
-        library_split.addWidget(self._right_split)
-        library_split.setStretchFactor(0, 0)
-        library_split.setStretchFactor(1, 1)
-        library_split.setSizes([320, 960])
-        self._tabs.addTab(library_split, "Library")
+        self._library_split = QSplitter(Qt.Orientation.Horizontal)
+        self._library_split.addWidget(self._filter_panel)
+        self._library_split.addWidget(self._right_split)
+        self._library_split.setStretchFactor(0, 0)
+        self._library_split.setStretchFactor(1, 1)
+        self._library_split.setSizes([320, 960])
+        self._tabs.addTab(self._library_split, "Library")
 
         # --- Queue tab: [ queue table | log ] ---
         queue_tab = QWidget()
@@ -308,6 +308,7 @@ class MainWindow(QMainWindow):
                 self._details_sizes = sizes
             header = self._details.sizeHint().height()
             self._right_split.setSizes([sizes[0] + sizes[1] - header, header])
+        self._settings.details_expanded = expanded   # 開閉状態を永続化
 
     @Slot(int)
     def _show_details(self, clip_id: int) -> None:
@@ -363,12 +364,26 @@ class MainWindow(QMainWindow):
         else:
             # 最終的に ~1920x1080 を想定（plan.md の UI レイアウト像）。
             self.resize(1280, 800)
+        self._restore_layout()
+
+    def _restore_layout(self) -> None:
+        """詳細の開閉・各スプリッタのサイズを復元する。"""
+        # 詳細の開閉（先に適用 → スプリッタ復元で最終サイズを上書き）
+        self._details.set_expanded(self._settings.details_expanded)
+        for key, splitter in (
+            ("library", self._library_split), ("right", self._right_split)
+        ):
+            saved = self._settings.load_splitter(key)
+            if saved:
+                splitter.restoreState(saved)
 
     def closeEvent(self, event) -> None:
         self._settings.save_geometry(
             bytes(self.saveGeometry()),
             bytes(self.saveState()),
         )
+        self._settings.save_splitter("library", bytes(self._library_split.saveState()))
+        self._settings.save_splitter("right", bytes(self._right_split.saveState()))
         self._player.stop()
         self._queue.shutdown(3000)
         if self._scan_worker and self._scan_worker.isRunning():
