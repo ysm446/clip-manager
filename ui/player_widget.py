@@ -5,10 +5,13 @@
 """
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl, QSize, QSettings
-from PySide6.QtGui import QFont, QPainter, QColor, QIcon, QPixmap, QShortcut, QKeySequence
+from PySide6.QtCore import Qt, Signal, QUrl, QSize, QSizeF, QSettings
+from PySide6.QtGui import (
+    QFont, QPainter, QColor, QPen, QIcon, QPixmap, QShortcut, QKeySequence,
+)
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -22,9 +25,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QGraphicsView,
+    QGraphicsScene,
+    QGraphicsTextItem,
+    QGraphicsRectItem,
+    QFrame,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 
 from core.subtitles import parse_srt, cue_at
 
@@ -74,53 +82,87 @@ class _ClickSlider(QSlider):
         painter.end()
 
 
-class _VideoArea(QVideoWidget):
-    """動画表示＋下部に字幕オーバーレイ（子 QLabel）。クリックで再生/停止トグル。"""
+class _VideoArea(QGraphicsView):
+    """QGraphicsView 上で動画と字幕を合成表示する。
+
+    QVideoWidget に子ウィジェットを重ねるとネイティブ動画面に隠れて字幕が
+    見えないため、``QGraphicsVideoItem`` ＋ テキストアイテムで同一シーンに描く。
+    クリックで再生/停止トグル。
+    """
 
     clicked = Signal()
 
     def __init__(self, parent=None):
-        super().__init__(parent)
+        self._scene = QGraphicsScene()
+        super().__init__(self._scene, parent)
         self.setMinimumSize(320, 180)
-        self._subtitle = QLabel(self)
-        self._subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._subtitle.setWordWrap(True)
-        self._subtitle.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._subtitle.setStyleSheet(
-            "color: white; background: rgba(0, 0, 0, 150);"
-            "padding: 4px 8px; border-radius: 4px;"
-        )
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setStyleSheet("background: black; border: none;")
+
+        self._video_item = QGraphicsVideoItem()
+        self._video_item.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+        self._scene.addItem(self._video_item)
+
+        self._sub_bg = QGraphicsRectItem()
+        self._sub_bg.setBrush(QColor(0, 0, 0, 160))
+        self._sub_bg.setPen(QPen(Qt.PenStyle.NoPen))
+        self._sub_bg.setZValue(2)
+        self._sub_bg.setVisible(False)
+        self._scene.addItem(self._sub_bg)
+
+        self._sub_text = QGraphicsTextItem()
+        self._sub_text.setDefaultTextColor(QColor("white"))
         f = QFont()
-        f.setPointSize(13)
-        self._subtitle.setFont(f)
-        self._subtitle.hide()
+        f.setPointSize(14)
+        self._sub_text.setFont(f)
+        self._sub_text.setZValue(3)
+        self._sub_text.setVisible(False)
+        self._scene.addItem(self._sub_text)
+
+        self._cur_text = ""
+
+    def video_output(self):
+        return self._video_item
 
     def set_subtitle(self, text: str) -> None:
-        if text:
-            self._subtitle.setText(text)
-            self._subtitle.show()
-            self._reposition()
-        else:
-            self._subtitle.hide()
+        self._cur_text = text
+        visible = bool(text)
+        self._sub_text.setVisible(visible)
+        self._sub_bg.setVisible(visible)
+        if visible:
+            self._layout_subtitle()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._reposition()
+        vp = self.viewport().size()
+        self._scene.setSceneRect(0, 0, vp.width(), vp.height())
+        self._video_item.setPos(0, 0)
+        self._video_item.setSize(QSizeF(vp.width(), vp.height()))
+        self._layout_subtitle()
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
 
-    def _reposition(self) -> None:
+    def _layout_subtitle(self) -> None:
+        if not self._cur_text:
+            return
+        vp = self.viewport().size()
         margin = 16
-        width = max(0, self.width() - 2 * margin)
-        self._subtitle.setFixedWidth(width)
-        h = self._subtitle.heightForWidth(width) if width else self._subtitle.sizeHint().height()
-        if h <= 0:
-            h = self._subtitle.sizeHint().height()
-        self._subtitle.setFixedHeight(h)
-        self._subtitle.move(margin, self.height() - h - margin)
+        text_w = max(100, vp.width() - 2 * margin)
+        self._sub_text.setTextWidth(text_w)
+        body = html.escape(self._cur_text).replace("\n", "<br>")
+        self._sub_text.setHtml(f'<div align="center">{body}</div>')
+        br = self._sub_text.boundingRect()
+        x = (vp.width() - br.width()) / 2
+        y = vp.height() - br.height() - margin
+        self._sub_text.setPos(x, y)
+        pad = 4
+        self._sub_bg.setRect(x + pad, y + pad, br.width() - 2 * pad, br.height() - 2 * pad)
 
 
 class PlayerWidget(QWidget):
@@ -270,7 +312,7 @@ class PlayerWidget(QWidget):
         self._player = QMediaPlayer(self)
         self._audio = QAudioOutput(self)
         self._player.setAudioOutput(self._audio)
-        self._player.setVideoOutput(self._video)
+        self._player.setVideoOutput(self._video.video_output())
         self._audio.setVolume(self._volume.value() / 100)
 
         self._player.positionChanged.connect(self._on_position)

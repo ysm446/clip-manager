@@ -49,7 +49,8 @@ ui/
                          #   配下ファイル＋タグ。D&D移動・削除・改名・複製・再生・タグ付与・
                          #   タグ/欠落でツリー絞り込み・Download here・開閉状態の永続化
   clip_details.py        # ClipDetailsPanel — 選択中クリップの詳細（サムネ＋メタ＋タグ）
-  player_widget.py       # PlayerWidget — QtMultimedia 動画再生＋.srt オーバーレイ
+  player_widget.py       # PlayerWidget — QtMultimedia 動画再生(QGraphicsVideoItem)＋
+                         #   .srt 字幕を同一シーンに合成オーバーレイ／ブックマーク
   download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
   queue_view.py          # QueueView — ダウンロードキューの進捗一覧
   library_view.py        # （現在は未使用。fmt_* ヘルパ＋将来のサムネイル一覧用に残置）
