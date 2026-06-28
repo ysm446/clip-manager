@@ -75,7 +75,9 @@ class _ClickSlider(QSlider):
 
 
 class _VideoArea(QVideoWidget):
-    """動画表示＋下部に字幕オーバーレイ（子 QLabel）。"""
+    """動画表示＋下部に字幕オーバーレイ（子 QLabel）。クリックで再生/停止トグル。"""
+
+    clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,6 +106,11 @@ class _VideoArea(QVideoWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reposition()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
     def _reposition(self) -> None:
         margin = 16
@@ -263,6 +270,7 @@ class PlayerWidget(QWidget):
         self._player.durationChanged.connect(self._on_duration)
         self._player.playbackStateChanged.connect(self._on_state)
         self._player.errorOccurred.connect(self._on_error)
+        self._video.clicked.connect(self._on_video_clicked)
 
     # ------------------------------------------------------------------
     # 公開 API
@@ -380,6 +388,11 @@ class PlayerWidget(QWidget):
             self._player.pause()
         else:
             self._player.play()
+
+    def _on_video_clicked(self) -> None:
+        # 動画クリックで再生/一時停止トグル（メディア未ロード時は無視）
+        if self._current_media:
+            self._toggle_play()
 
     def _on_state(self, state) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState
