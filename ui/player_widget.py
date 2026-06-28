@@ -141,6 +141,7 @@ class PlayerWidget(QWidget):
         self._library = None
         self._markers = []
         self._settings = QSettings()
+        self._subtitles_on = self._settings.value("ui/subtitles_on", True, type=bool)
         self._init_ui()
         self._init_player()
 
@@ -181,8 +182,14 @@ class PlayerWidget(QWidget):
         self._play_btn.clicked.connect(self._toggle_play)
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.clicked.connect(self.stop)
+        self._sub_btn = QPushButton("Subtitles")
+        self._sub_btn.setCheckable(True)
+        self._sub_btn.setChecked(self._subtitles_on)
+        self._sub_btn.setToolTip("字幕の表示/非表示（.srt があるとき）")
+        self._sub_btn.toggled.connect(self._on_subtitles_toggled)
         ctl.addWidget(self._play_btn)
         ctl.addWidget(self._stop_btn)
+        ctl.addWidget(self._sub_btn)
 
         ctl.addSpacing(12)
         ctl.addWidget(QLabel("Speed:"))
@@ -282,6 +289,7 @@ class PlayerWidget(QWidget):
         self._current_media = media_abs
         self._title.setText(Path(media_abs).name)
         self._video.set_subtitle("")
+        self._sub_btn.setEnabled(bool(self._cues))   # 字幕があるときだけ有効
         self._player.setSource(QUrl.fromLocalFile(media_abs))
         self._player.setPlaybackRate(self._current_speed())
         self._player.play()
@@ -398,11 +406,19 @@ class PlayerWidget(QWidget):
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         self._play_btn.setText("Pause" if playing else "Play")
 
+    def _on_subtitles_toggled(self, checked: bool) -> None:
+        self._subtitles_on = checked
+        self._settings.setValue("ui/subtitles_on", checked)
+        if not checked:
+            self._video.set_subtitle("")
+        else:
+            self._on_position(self._player.position())   # 現在位置の字幕を即反映
+
     def _on_position(self, pos: int) -> None:
         if not self._seek.isSliderDown():
             self._seek.setValue(pos)
         self._pos_label.setText(_fmt_ms(pos))
-        if self._cues:
+        if self._subtitles_on and self._cues:
             self._video.set_subtitle(cue_at(self._cues, pos))
 
     def _on_duration(self, dur: int) -> None:

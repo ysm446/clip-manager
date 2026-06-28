@@ -337,15 +337,41 @@ class MainWindow(QMainWindow):
         if clip is None:
             return
         media = str(self._active_lib.to_abs(clip.rel_path))
-        subtitle = (
-            str(self._active_lib.to_abs(clip.subtitle_path))
-            if clip.subtitle_path else ""
-        )
+        if clip.subtitle_path:
+            subtitle = str(self._active_lib.to_abs(clip.subtitle_path))
+        else:
+            subtitle = self._find_sidecar_srt(Path(media))   # 隣の .srt を自動検出
         self._playing_clip_id = clip_id
         self._player.set_clip(clip_id, self._active_lib)
         self._player.play(media, subtitle)
         self._player.set_markers(self._db.list_markers(clip_id))
         self._show_details(clip_id)
+
+    @staticmethod
+    def _find_sidecar_srt(media_path: Path) -> str:
+        """動画と同じフォルダにある .srt を探す（`<stem>.srt` / `<stem>.<lang>.srt`）。
+
+        `<stem>.en.srt`（英語）を優先、次に `<stem>.srt`、その他は名前順で最初。
+        """
+        stem = media_path.stem
+        exact = None
+        en = None
+        others = []
+        try:
+            for f in media_path.parent.iterdir():
+                if not (f.is_file() and f.suffix.lower() == ".srt"):
+                    continue
+                if f.name == stem + ".srt":
+                    exact = f
+                elif f.name.startswith(stem + "."):
+                    if f.name.lower() == (stem + ".en.srt").lower():
+                        en = f
+                    else:
+                        others.append(f)
+        except OSError:
+            return ""
+        chosen = en or exact or (sorted(others)[0] if others else None)
+        return str(chosen) if chosen else ""
 
     # ------------------------------------------------------------------
     # ブックマーク（markers: 点）
