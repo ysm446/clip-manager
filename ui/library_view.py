@@ -63,7 +63,8 @@ def fmt_resolution(w: int | None, h: int | None) -> str:
 
 
 class LibraryView(QWidget):
-    play_requested = Signal(str)        # 絶対パス
+    play_requested = Signal(str, str)   # (動画の絶対パス, 字幕の絶対パス or "")
+    open_external_requested = Signal(str)
     enrich_requested = Signal()
     open_location_requested = Signal(str)
     library_modified = Signal()         # ファイル操作でクリップ件数等が変わった
@@ -254,8 +255,18 @@ class LibraryView(QWidget):
 
     def _emit_play(self, clip_id) -> None:
         abs_path = self._abs_path(clip_id)
+        if not abs_path:
+            return
+        clip = self._by_id.get(clip_id)
+        subtitle = ""
+        if clip and clip.subtitle_path and self._library is not None:
+            subtitle = str(self._library.to_abs(clip.subtitle_path))
+        self.play_requested.emit(abs_path, subtitle)
+
+    def _emit_external(self, clip_id) -> None:
+        abs_path = self._abs_path(clip_id)
         if abs_path:
-            self.play_requested.emit(abs_path)
+            self.open_external_requested.emit(abs_path)
 
     # ------------------------------------------------------------------
     # Context menu (assign folder / toggle tags / play / locate)
@@ -276,6 +287,9 @@ class LibraryView(QWidget):
             return
         menu = QMenu(self)
         menu.addAction("Play").triggered.connect(lambda: self._emit_play(clip_id))
+        menu.addAction("Open externally").triggered.connect(
+            lambda: self._emit_external(clip_id)
+        )
         menu.addAction("Open file location").triggered.connect(
             lambda: self._emit_locate(clip_id)
         )

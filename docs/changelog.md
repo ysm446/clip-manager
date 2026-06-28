@@ -2,6 +2,17 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 5: アプリ内プレイヤー）
+
+- `core/subtitles.py`: 外部 `.srt` パーサ（`parse_srt`/`cue_at`）。
+- `ui/player_widget.py`: `PlayerWidget`（QtMultimedia）。再生/一時停止・シーク・
+  音量・速度・字幕オーバーレイ・Open externally・エラー表示。
+- `ui/library_view.py`: `play_requested` を (動画, 字幕) に、`open_external_requested`。
+- `ui/main_window.py`: Library タブを **[ツリー｜一覧｜プレイヤー]** の3ペインに。
+- QtMultimedia 実機確認（h264+aac の mp4 ロード成功）。
+- 旧レジストリの実ライブラリ "Youtube" を `data/` へ移行。
+- Phase 5/既存テスト全通過。
+
 ## 2026-06-28（Phase 4.5: DLキュー＋実フォルダ階層へ再設計）
 
 - 階層を**実フォルダ**主軸に再設計（横断分類はタグ）。論理フォルダは UI から撤去

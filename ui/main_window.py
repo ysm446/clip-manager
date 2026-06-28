@@ -24,6 +24,7 @@ from core.download_queue import DownloadQueue, DownloadRequest
 from ui.library_view import LibraryView
 from ui.filter_panel import FilterPanel
 from ui.queue_view import QueueView
+from ui.player_widget import PlayerWidget
 from ui.download_dialog import DownloadDialog
 from ui.settings_dialog import SettingsDialog
 
@@ -54,10 +55,13 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
 
-        # --- Library tab: [ folder/tag tree | clip list ] ---
+        # --- Library tab: [ folder/tag tree | clip list | player ] ---
         self._filter_panel = FilterPanel()
         self._library_view = LibraryView()
-        self._library_view.play_requested.connect(self._play_clip)
+        self._player = PlayerWidget()
+        self._library_view.play_requested.connect(self._player.play)
+        self._library_view.open_external_requested.connect(self._open_external)
+        self._player.open_external_requested.connect(self._open_external)
         self._library_view.enrich_requested.connect(self._enrich_library)
         self._library_view.open_location_requested.connect(self._open_location)
         self._library_view.library_modified.connect(self._update_library_status)
@@ -69,9 +73,11 @@ class MainWindow(QMainWindow):
         library_split = QSplitter(Qt.Orientation.Horizontal)
         library_split.addWidget(self._filter_panel)
         library_split.addWidget(self._library_view)
+        library_split.addWidget(self._player)
         library_split.setStretchFactor(0, 0)
         library_split.setStretchFactor(1, 1)
-        library_split.setSizes([260, 1100])
+        library_split.setStretchFactor(2, 1)
+        library_split.setSizes([240, 640, 680])
         self._tabs.addTab(library_split, "Library")
 
         # --- Queue tab: [ queue table | log ] ---
@@ -278,8 +284,8 @@ class MainWindow(QMainWindow):
         )
 
     @Slot(str)
-    def _play_clip(self, abs_path: str) -> None:
-        """クリップを既定のプレイヤーで開く（アプリ内プレイヤーは Phase 5）。"""
+    def _open_external(self, abs_path: str) -> None:
+        """クリップを OS 既定のプレイヤーで開く（コーデック非対応時のフォールバック）。"""
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
     @Slot(str)
@@ -310,6 +316,7 @@ class MainWindow(QMainWindow):
             bytes(self.saveGeometry()),
             bytes(self.saveState()),
         )
+        self._player.stop()
         self._queue.shutdown(3000)
         if self._scan_worker and self._scan_worker.isRunning():
             self._scan_worker.wait(3000)

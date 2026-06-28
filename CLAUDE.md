@@ -42,17 +42,20 @@ core/
   thumbnails.py          # generate_thumbnail() — ffmpeg でサムネイル生成（純関数）
   enrich_worker.py       # EnrichWorker(QThread) — メタ補完＋サムネイル生成
   download_queue.py      # DownloadQueue(順次) + DownloadRequest。worker_factory 注入可
+  subtitles.py           # parse_srt()/cue_at() — 外部 .srt パーサ（純関数）
 ui/
-  main_window.py         # MainWindow — Library/Queue のタブ。Library は QSplitter
+  main_window.py         # MainWindow — Library/Queue のタブ。Library は3ペイン QSplitter
   filter_panel.py        # FilterPanel — 実フォルダ/タグツリー・絞り込み・Download here
   library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・付与・再生要求
+  player_widget.py       # PlayerWidget — QtMultimedia 動画再生＋.srt オーバーレイ
   download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
   queue_view.py          # QueueView — ダウンロードキューの進捗一覧
   settings_dialog.py     # SettingsDialog
 ```
 
-Library タブは `QSplitter[FilterPanel | LibraryView]`。最終的に右へ動画プレイヤー
-（Phase 5）を足し、~1920×1080 の一画面で階層／サムネイル／再生を出す。
+Library タブは `QSplitter[FilterPanel | LibraryView | PlayerWidget]`（3ペイン）。
+~1920×1080 の一画面で階層／サムネイル／再生を出す。再生はアプリ内プレイヤー、
+コーデック非対応時は「Open externally」で OS 既定プレイヤーへフォールバック。
 
 ### フォルダ階層は実フォルダ（重要な設計）
 
