@@ -13,9 +13,9 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from core.models import Clip, Folder, Tag
+from core.models import Clip, Folder, Tag, Marker
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE clips (
@@ -63,6 +63,28 @@ CREATE INDEX idx_clips_folder ON clips(folder_id);
 CREATE INDEX idx_clips_title  ON clips(title);
 """
 
+# v2: マーカー（点=ブックマーク / 区間=チャプター。共通テーブル）
+_MARKERS_SQL = """
+CREATE TABLE markers (
+    id             INTEGER PRIMARY KEY,
+    clip_id        INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    position_ms    INTEGER NOT NULL,
+    end_ms         INTEGER,
+    kind           TEXT NOT NULL DEFAULT 'bookmark',
+    title          TEXT,
+    source         TEXT NOT NULL DEFAULT 'user',
+    color          TEXT,
+    thumbnail_path TEXT,
+    created_at     TEXT
+);
+CREATE INDEX idx_markers_clip ON markers(clip_id, position_ms);
+"""
+
+_MARKER_COLUMNS = [
+    "clip_id", "position_ms", "end_ms", "kind", "title",
+    "source", "color", "thumbnail_path", "created_at",
+]
+
 # clips テーブルの列（INSERT/UPDATE 用、id を除く）
 _CLIP_COLUMNS = [
     "rel_path", "title", "source_url", "duration", "filesize",
@@ -104,12 +126,19 @@ class LibraryDatabase:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
         ).fetchone()
         if row is None:
+            # 新規 DB: 現行スキーマ一式を作成。
             self._conn.executescript(_SCHEMA_SQL)
+            self._conn.executescript(_MARKERS_SQL)
             self._conn.execute(
                 "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
             )
             self._conn.commit()
-        # 将来のスキーマ変更はここでバージョンを見て移行する。
+            return
+        # 既存 DB: バージョンを見て増分マイグレーション。
+        if self.version < 2:
+            self._conn.executescript(_MARKERS_SQL)       # v1 → v2: markers 追加
+            self._conn.execute("INSERT INTO schema_version(version) VALUES (2)")
+            self._conn.commit()
 
     @property
     def version(self) -> int:
@@ -392,3 +421,77 @@ class LibraryDatabase:
             (clip_id,),
         ).fetchall()
         return [Tag(id=r["id"], name=r["name"], color=r["color"]) for r in rows]
+
+    # ------------------------------------------------------------------
+    # マーカー（ブックマーク / チャプター）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_marker(row: sqlite3.Row) -> Marker:
+        return Marker(
+            id=row["id"],
+            clip_id=row["clip_id"],
+            position_ms=row["position_ms"],
+            end_ms=row["end_ms"],
+            kind=row["kind"],
+            title=row["title"],
+            source=row["source"],
+            color=row["color"],
+            thumbnail_path=row["thumbnail_path"],
+            created_at=row["created_at"],
+        )
+
+    def add_marker(
+        self,
+        clip_id: int,
+        position_ms: int,
+        *,
+        end_ms: int | None = None,
+        kind: str = "bookmark",
+        title: str | None = None,
+        source: str = "user",
+        color: str | None = None,
+        thumbnail_path: str | None = None,
+    ) -> int:
+        cols = ", ".join(_MARKER_COLUMNS)
+        ph = ", ".join("?" for _ in _MARKER_COLUMNS)
+        cur = self._conn.execute(
+            f"INSERT INTO markers ({cols}) VALUES ({ph})",
+            [clip_id, position_ms, end_ms, kind, title, source, color,
+             thumbnail_path, _now()],
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def list_markers(self, clip_id: int, kind: str | None = None) -> list[Marker]:
+        sql = "SELECT * FROM markers WHERE clip_id = ?"
+        params: list = [clip_id]
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        sql += " ORDER BY position_ms"
+        rows = self._conn.execute(sql, params).fetchall()
+        return [self._row_to_marker(r) for r in rows]
+
+    def get_marker(self, marker_id: int) -> Marker | None:
+        row = self._conn.execute(
+            "SELECT * FROM markers WHERE id = ?", (marker_id,)
+        ).fetchone()
+        return self._row_to_marker(row) if row else None
+
+    def update_marker_title(self, marker_id: int, title: str) -> None:
+        self._conn.execute(
+            "UPDATE markers SET title = ? WHERE id = ?", (title, marker_id)
+        )
+        self._conn.commit()
+
+    def update_marker_thumbnail(self, marker_id: int, thumbnail_path: str | None) -> None:
+        self._conn.execute(
+            "UPDATE markers SET thumbnail_path = ? WHERE id = ?",
+            (thumbnail_path, marker_id),
+        )
+        self._conn.commit()
+
+    def delete_marker(self, marker_id: int) -> None:
+        self._conn.execute("DELETE FROM markers WHERE id = ?", (marker_id,))
+        self._conn.commit()

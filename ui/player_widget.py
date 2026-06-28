@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal, QUrl, QSize
+from PySide6.QtGui import QFont, QPainter, QColor, QIcon, QPixmap, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QComboBox,
     QStyle,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -33,7 +36,15 @@ def _fmt_ms(ms: int) -> str:
 
 
 class _ClickSlider(QSlider):
-    """溝（groove）をクリックすると、その位置へジャンプする水平スライダー。"""
+    """溝クリックでジャンプ＋マーカー位置にティックを描画する水平スライダー。"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._marker_positions: list[int] = []
+
+    def set_marker_positions(self, positions: list[int]) -> None:
+        self._marker_positions = list(positions)
+        self.update()
 
     def _value_for_x(self, x: float) -> int:
         return QStyle.sliderValueFromPosition(
@@ -46,6 +57,20 @@ class _ClickSlider(QSlider):
             self.setValue(value)
             self.sliderMoved.emit(value)   # 即シーク（player が setPosition）
         super().mousePressEvent(event)     # 続けてドラッグできるようにする
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self._marker_positions or self.maximum() <= self.minimum():
+            return
+        painter = QPainter(self)
+        painter.setPen(QColor("#e67e22"))
+        h = self.height()
+        for pos in self._marker_positions:
+            x = QStyle.sliderPositionFromValue(
+                self.minimum(), self.maximum(), pos, self.width()
+            )
+            painter.drawLine(x, 2, x, h - 2)
+        painter.end()
 
 
 class _VideoArea(QVideoWidget):
@@ -92,6 +117,9 @@ class _VideoArea(QVideoWidget):
 
 class PlayerWidget(QWidget):
     open_external_requested = Signal(str)
+    bookmark_add_requested = Signal(int)            # position_ms
+    bookmark_rename_requested = Signal(int, str)    # (marker_id, current_title)
+    bookmark_delete_requested = Signal(int)         # marker_id
 
     _SPEEDS = ["0.5×", "0.75×", "1.0×", "1.25×", "1.5×", "2.0×"]
 
@@ -99,6 +127,9 @@ class PlayerWidget(QWidget):
         super().__init__(parent)
         self._cues = []
         self._current_media = ""
+        self._clip_id = None
+        self._library = None
+        self._markers = []
         self._init_ui()
         self._init_player()
 
@@ -167,9 +198,43 @@ class PlayerWidget(QWidget):
         ctl.addWidget(self._ext_btn)
         layout.addLayout(ctl)
 
+        # ブックマーク行
+        bm_row = QHBoxLayout()
+        self._bm_add_btn = QPushButton("＋ Bookmark (B)")
+        self._bm_add_btn.setToolTip("現在位置にブックマークを追加")
+        self._bm_add_btn.clicked.connect(self._request_add_bookmark)
+        self._bm_prev_btn = QPushButton("◀ Prev")
+        self._bm_prev_btn.clicked.connect(lambda: self._jump_marker(-1))
+        self._bm_next_btn = QPushButton("Next ▶")
+        self._bm_next_btn.clicked.connect(lambda: self._jump_marker(1))
+        bm_row.addWidget(self._bm_add_btn)
+        bm_row.addWidget(self._bm_prev_btn)
+        bm_row.addWidget(self._bm_next_btn)
+        bm_row.addStretch()
+        layout.addLayout(bm_row)
+
+        # ブックマーク一覧（サムネイル付き）
+        self._bm_list = QListWidget()
+        self._bm_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self._bm_list.setIconSize(QSize(120, 68))
+        self._bm_list.setGridSize(QSize(140, 104))
+        self._bm_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._bm_list.setMovement(QListWidget.Movement.Static)
+        self._bm_list.setWordWrap(True)
+        self._bm_list.setFixedHeight(120)
+        self._bm_list.itemDoubleClicked.connect(self._on_bookmark_activated)
+        self._bm_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._bm_list.customContextMenuRequested.connect(self._on_bookmark_menu)
+        layout.addWidget(self._bm_list)
+
         self._status = QLabel("")
         self._status.setStyleSheet("color: #c0392b; font-size: 11px;")
         layout.addWidget(self._status)
+
+        # B キーで現在位置にブックマーク
+        self._bm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_B), self)
+        self._bm_shortcut.activated.connect(self._request_add_bookmark)
+        self._update_bookmark_enabled()
 
     def _init_player(self) -> None:
         self._player = QMediaPlayer(self)
@@ -200,6 +265,84 @@ class PlayerWidget(QWidget):
     def stop(self) -> None:
         self._player.stop()
         self._video.set_subtitle("")
+
+    # ------------------------------------------------------------------
+    # ブックマーク
+    # ------------------------------------------------------------------
+
+    def set_clip(self, clip_id, library) -> None:
+        """再生対象クリップのコンテキスト（ブックマーク保存用）を設定。"""
+        self._clip_id = clip_id
+        self._library = library
+        self.set_markers([])
+
+    def set_markers(self, markers) -> None:
+        self._markers = sorted(markers, key=lambda m: m.position_ms)
+        self._bm_list.clear()
+        for m in self._markers:
+            label = _fmt_ms(m.position_ms)
+            if m.title and m.title != label:
+                label = f"{label}  {m.title}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, m.id)
+            item.setData(Qt.ItemDataRole.UserRole + 1, m.position_ms)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+            icon = self._marker_icon(m)
+            if icon is not None:
+                item.setIcon(icon)
+            self._bm_list.addItem(item)
+        self._seek.set_marker_positions([m.position_ms for m in self._markers])
+        self._update_bookmark_enabled()
+
+    def _marker_icon(self, marker):
+        if marker.thumbnail_path and self._library is not None:
+            tp = self._library.to_abs(marker.thumbnail_path)
+            if Path(tp).is_file():
+                pix = QPixmap(str(tp))
+                if not pix.isNull():
+                    return QIcon(pix)
+        return None
+
+    def _update_bookmark_enabled(self) -> None:
+        has_clip = self._clip_id is not None
+        self._bm_add_btn.setEnabled(has_clip)
+        has_marks = bool(self._markers)
+        self._bm_prev_btn.setEnabled(has_marks)
+        self._bm_next_btn.setEnabled(has_marks)
+
+    def _request_add_bookmark(self) -> None:
+        if self._clip_id is not None:
+            self.bookmark_add_requested.emit(int(self._player.position()))
+
+    def _on_bookmark_activated(self, item: QListWidgetItem) -> None:
+        self._player.setPosition(int(item.data(Qt.ItemDataRole.UserRole + 1)))
+
+    def _jump_marker(self, direction: int) -> None:
+        if not self._markers:
+            return
+        pos = self._player.position()
+        if direction > 0:
+            nxt = next((m for m in self._markers if m.position_ms > pos + 50), None)
+        else:
+            nxt = next((m for m in reversed(self._markers) if m.position_ms < pos - 50), None)
+        if nxt is not None:
+            self._player.setPosition(nxt.position_ms)
+
+    def _on_bookmark_menu(self, pos) -> None:
+        item = self._bm_list.itemAt(pos)
+        if item is None:
+            return
+        mid = int(item.data(Qt.ItemDataRole.UserRole))
+        marker = next((m for m in self._markers if m.id == mid), None)
+        menu = QMenu(self)
+        menu.addAction("Jump").triggered.connect(lambda: self._on_bookmark_activated(item))
+        menu.addAction("Rename...").triggered.connect(
+            lambda: self.bookmark_rename_requested.emit(mid, (marker.title or "") if marker else "")
+        )
+        menu.addAction("Delete").triggered.connect(
+            lambda: self.bookmark_delete_requested.emit(mid)
+        )
+        menu.exec(self._bm_list.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
     # ハンドラ

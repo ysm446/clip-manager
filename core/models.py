@@ -53,6 +53,25 @@ class Tag:
 
 
 @dataclass
+class Marker:
+    """動画上の時間アンカー。点（ブックマーク）と区間（チャプター）を共通で表す。
+
+    ``end_ms`` が None なら点（ブックマーク）、値があれば区間（チャプター）。
+    """
+
+    clip_id: int
+    position_ms: int                    # 開始位置（ミリ秒）
+    id: int | None = None
+    end_ms: int | None = None           # None=点 / 値=区間
+    kind: str = "bookmark"              # 'bookmark' | 'chapter'
+    title: str | None = None
+    source: str = "user"               # 'user' | 'llm' | 'scene'
+    color: str | None = None
+    thumbnail_path: str | None = None   # ルート相対（.clipmanager/markers/<id>.jpg）
+    created_at: str | None = None
+
+
+@dataclass
 class LibraryInfo:
     """登録済みライブラリのレジストリ項目（QSettings に保持される）。"""
 

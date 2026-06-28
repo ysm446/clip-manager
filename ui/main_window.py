@@ -21,9 +21,10 @@ from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
 from core.enrich_worker import EnrichWorker
 from core.download_queue import DownloadQueue, DownloadRequest
+from core.thumbnails import generate_thumbnail
 from ui.filter_panel import FilterPanel
 from ui.queue_view import QueueView
-from ui.player_widget import PlayerWidget
+from ui.player_widget import PlayerWidget, _fmt_ms
 from ui.clip_details import ClipDetailsPanel
 from ui.download_dialog import DownloadDialog
 from ui.settings_dialog import SettingsDialog
@@ -39,6 +40,7 @@ class MainWindow(QMainWindow):
         self._db: LibraryDatabase | None = None  # main-thread connection
         self._scan_worker: ScanWorker | None = None
         self._enrich_worker: EnrichWorker | None = None
+        self._playing_clip_id: int | None = None     # プレイヤーで再生中のクリップ
         # --- Download queue ---
         self._queue = DownloadQueue()
         self._queue.download_succeeded.connect(self._on_download_succeeded)
@@ -62,6 +64,9 @@ class MainWindow(QMainWindow):
         self._details = ClipDetailsPanel()       # 右下：選択中クリップの詳細
 
         self._player.open_external_requested.connect(self._open_external)
+        self._player.bookmark_add_requested.connect(self._add_bookmark)
+        self._player.bookmark_rename_requested.connect(self._rename_bookmark)
+        self._player.bookmark_delete_requested.connect(self._delete_bookmark)
         self._filter_panel.clip_activated.connect(self._play_clip_id)
         self._filter_panel.clip_selected.connect(self._show_details)
         self._filter_panel.open_external_requested.connect(self._open_external)
@@ -197,6 +202,8 @@ class MainWindow(QMainWindow):
         self._active_lib = self._libraries.active_library()
         if self._active_lib is not None:
             self._db = self._active_lib.open_db()
+        self._playing_clip_id = None
+        self._player.set_clip(None, None)
         self._filter_panel.set_library(self._active_lib, self._db)
         self._details.set_library(self._active_lib)
         self._update_library_status()
@@ -334,8 +341,68 @@ class MainWindow(QMainWindow):
             str(self._active_lib.to_abs(clip.subtitle_path))
             if clip.subtitle_path else ""
         )
+        self._playing_clip_id = clip_id
+        self._player.set_clip(clip_id, self._active_lib)
         self._player.play(media, subtitle)
+        self._player.set_markers(self._db.list_markers(clip_id))
         self._show_details(clip_id)
+
+    # ------------------------------------------------------------------
+    # ブックマーク（markers: 点）
+    # ------------------------------------------------------------------
+
+    def _reload_markers(self) -> None:
+        if self._db is not None and self._playing_clip_id is not None:
+            self._player.set_markers(self._db.list_markers(self._playing_clip_id))
+
+    @Slot(int)
+    def _add_bookmark(self, position_ms: int) -> None:
+        cid = self._playing_clip_id
+        if self._db is None or self._active_lib is None or cid is None:
+            return
+        clip = self._db.get_clip(cid)
+        if clip is None:
+            return
+        mid = self._db.add_marker(cid, position_ms, title=_fmt_ms(position_ms))
+        # その時刻のフレームを .clipmanager/markers/<id>.jpg に生成
+        try:
+            out = self._active_lib.markers_dir / f"{mid}.jpg"
+            if generate_thumbnail(
+                self._active_lib.to_abs(clip.rel_path), out,
+                at_seconds=position_ms / 1000.0,
+            ):
+                self._db.update_marker_thumbnail(mid, self._active_lib.to_rel(out))
+        except Exception as e:
+            self._on_log(f"[Bookmark] thumbnail failed: {e}")
+        self._reload_markers()
+        self._on_log(f"[Bookmark] added at {_fmt_ms(position_ms)}")
+
+    @Slot(int, str)
+    def _rename_bookmark(self, marker_id: int, current: str) -> None:
+        if self._db is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename bookmark", "Label:", text=current
+        )
+        if not ok:
+            return
+        self._db.update_marker_title(marker_id, name.strip())
+        self._reload_markers()
+
+    @Slot(int)
+    def _delete_bookmark(self, marker_id: int) -> None:
+        if self._db is None:
+            return
+        marker = self._db.get_marker(marker_id)
+        self._db.delete_marker(marker_id)
+        if marker and marker.thumbnail_path and self._active_lib is not None:
+            thumb = self._active_lib.to_abs(marker.thumbnail_path)
+            try:
+                if thumb.is_file():
+                    thumb.unlink()
+            except OSError:
+                pass
+        self._reload_markers()
 
     @Slot(str)
     def _open_external(self, abs_path: str) -> None:

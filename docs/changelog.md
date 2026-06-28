@@ -2,6 +2,21 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（ブックマーク機能 / markers 基盤）
+
+- **共通マーカー基盤**を追加（点=ブックマーク／区間=チャプターを 1 テーブルで表現）。
+  将来の LLM 自動チャプターも同じ仕組みに流し込める設計。
+- `core/database.py`: **スキーマ v2** に。`markers` テーブル（position_ms/end_ms/kind/
+  title/source/color/thumbnail_path）＋ v1→v2 マイグレーション＋ DAO。
+- `core/models.py`: `Marker`。`core/library.py`: `markers_dir`。
+  `core/thumbnails.py`: `generate_thumbnail(at_seconds=...)` で指定時刻のフレーム。
+- `ui/player_widget.py`: 「＋ Bookmark（B キー）」、**シークバー上のティック描画**、
+  **サムネイル付きブックマーク一覧**（ダブルクリックでジャンプ・前/次・右クリックで
+  リネーム/削除）。
+- `ui/main_window.py`: 再生時にプレイヤーへクリップ文脈を渡し、ブックマーク追加で
+  その時刻のサムネイルを `<root>/.clipmanager/markers/<id>.jpg` に生成・登録。
+- スキーマ v1→v2 マイグレーションとブックマーク一連の流れをテストで検証。
+
 ## 2026-06-28（画質デフォルトを best に）
 
 - `core/settings.py`: `default_quality` の既定値を `720p` → `best` に変更。

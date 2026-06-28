@@ -32,8 +32,13 @@ def generate_thumbnail(
     duration: float | None = None,
     ffmpeg: str | None = None,
     width: int = THUMB_WIDTH,
+    at_seconds: float | None = None,
 ) -> bool:
-    """``src`` のサムネイルを ``out_path`` (JPEG) に生成する。成功で True。"""
+    """``src`` のサムネイルを ``out_path`` (JPEG) に生成する。成功で True。
+
+    ``at_seconds`` を指定するとその時刻のフレームを使う（ブックマーク/チャプター用）。
+    未指定なら長さから自動決定する。
+    """
     exe = ffmpeg or ffmpeg_path()
     if not exe:
         return False
@@ -43,7 +48,8 @@ def generate_thumbnail(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ss = _seek_seconds(duration)
+    ss = at_seconds if at_seconds is not None else _seek_seconds(duration)
+    ss = max(0.0, ss)
     cmd = [
         exe, "-y", "-ss", f"{ss:.2f}", "-i", str(src),
         "-frames:v", "1", "-vf", f"scale={width}:-1",

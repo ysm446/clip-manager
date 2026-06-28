@@ -34,7 +34,7 @@ core/
   downloader.py          # DownloadWorker(QThread) + build_format_string()。
                          #   完了時 download_succeeded(dict) を emit（自動登録用）
   models.py              # Clip / Folder / Tag / LibraryInfo（dataclass）
-  database.py            # LibraryDatabase — 1ライブラリの SQLite 接続・スキーマ・DAO
+  database.py            # LibraryDatabase — SQLite 接続・スキーマ(v2)・DAO。markers含む
   library.py             # Library — ルート＋DB、相対/絶対パス変換、走査取り込み・欠落検知
   libraries.py           # LibraryManager — 複数ライブラリの登録/切替（QSettings）
   scan_worker.py         # ScanWorker(QThread) — 走査を別スレッドで実行
@@ -117,6 +117,16 @@ Icons は現在フォルダの中身を大アイコンで表示し、先頭に�
   接続は補完後の再クエリで最新を見られる。
 - ffprobe/ffmpeg が無い環境では補完は no-op（アプリは動作する）。
 - サムネイルは `<root>/.clipmanager/thumbnails/<clip_id>.jpg`。
+
+## マーカー（ブックマーク / チャプター）
+
+- `markers` テーブル（スキーマ v2）で**点（ブックマーク, end_ms=NULL）と区間
+  （チャプター, end_ms あり）を共通表現**。`kind`（bookmark/chapter）・`source`
+  （user/llm/scene）で用途を区別。将来の LLM 自動チャプターも同じ仕組み。
+- マーカーのサムネイルは `<root>/.clipmanager/markers/<marker_id>.jpg`（バイナリは FS、
+  パスは DB の `thumbnail_path` にルート相対で保持）。
+- プレイヤーが現在再生中クリップの文脈を持ち、ブックマーク追加で ffmpeg がその時刻の
+  フレームを生成する（`generate_thumbnail(at_seconds=...)`）。
 
 ## 将来構想
 

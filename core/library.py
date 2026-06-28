@@ -47,6 +47,10 @@ class Library:
     def thumbnails_dir(self) -> Path:
         return self.meta_dir / THUMBS_DIRNAME
 
+    @property
+    def markers_dir(self) -> Path:
+        return self.meta_dir / "markers"
+
     def open_db(self) -> LibraryDatabase:
         """このライブラリの DB を開く（呼び出しスレッド専用の接続）。"""
         return LibraryDatabase(self.db_path)
