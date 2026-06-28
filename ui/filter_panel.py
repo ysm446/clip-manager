@@ -11,20 +11,30 @@ from __future__ import annotations
 import json
 from pathlib import PurePosixPath
 
-from PySide6.QtCore import Qt, Signal, QSettings
+from PySide6.QtCore import Qt, Signal, QSettings, QSize
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QPushButton,
+    QLabel,
+    QComboBox,
+    QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
+    QListWidget,
+    QListWidgetItem,
     QInputDialog,
     QMessageBox,
     QMenu,
     QStyle,
     QAbstractItemView,
 )
+
+# アイコン表示の QListWidgetItem 用ロール
+_IROLE_KIND = Qt.ItemDataRole.UserRole      # "up" | "folder" | "clip"
+_IROLE_ID = Qt.ItemDataRole.UserRole + 1    # folder/up=rel(str) / clip=id(int)
 
 _ROLE_KIND = Qt.ItemDataRole.UserRole       # "folder" | "clip" | "tag" | "missing" | "header"
 _ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder=rel(str,""=root) / clip=id(int) / tag=id(int)
@@ -80,6 +90,24 @@ class _FolderTree(QTreeWidget):
             self.clip_dropped.emit(clip_id, dest_rel)
 
 
+class _IconList(QListWidget):
+    """サムネイル（アイコン）表示。Delete キーで選択クリップ削除を要求する。"""
+
+    delete_requested = Signal(list)   # [clip_id, ...]
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Delete:
+            ids = [
+                int(it.data(_IROLE_ID))
+                for it in self.selectedItems()
+                if it.data(_IROLE_KIND) == "clip"
+            ]
+            if ids:
+                self.delete_requested.emit(ids)
+                return
+        super().keyPressEvent(event)
+
+
 class FilterPanel(QWidget):
     clip_activated = Signal(int)             # ファイルのダブルクリック（再生）
     clip_selected = Signal(int)              # ファイル選択（詳細表示）
@@ -90,18 +118,39 @@ class FilterPanel(QWidget):
     library_changed = Signal()               # 構成が変わった
 
     _EXPANDED_KEY = "ui/expanded_folders"
+    _MODE_KEY = "ui/explorer_mode"           # "tree" | "icons"
+    _TREE, _ICONS = 0, 1
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._library = None
         self._db = None
-        self._settings = QSettings()   # 開閉状態の永続化（data/ へリダイレクト済み）
+        self._cur_dir = ""                   # アイコン表示の現在フォルダ（rel, ""=root）
+        self._settings = QSettings()         # 開閉状態・表示モードの永続化（data/）
         self._init_ui()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
+
+        # --- toolbar: 表示モード切替 ＋ (アイコン時) 上へ／パス ---
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("View:"))
+        self._view_combo = QComboBox()
+        self._view_combo.addItems(["Tree", "Icons"])
+        self._view_combo.currentIndexChanged.connect(self._on_view_mode_changed)
+        bar.addWidget(self._view_combo)
+        self._up_btn = QPushButton("↑ Up")
+        self._up_btn.clicked.connect(self._go_up)
+        bar.addWidget(self._up_btn)
+        self._path_label = QLabel("")
+        self._path_label.setStyleSheet("color: gray; font-size: 11px;")
+        bar.addWidget(self._path_label, stretch=1)
+        layout.addLayout(bar)
+
+        # --- stacked: ツリー / アイコン ---
+        self._stack = QStackedWidget()
 
         self._tree = _FolderTree()
         self._tree.setHeaderHidden(True)
@@ -113,7 +162,24 @@ class FilterPanel(QWidget):
         self._tree.delete_requested.connect(self._delete_clips)
         self._tree.itemExpanded.connect(self._on_expand_changed)
         self._tree.itemCollapsed.connect(self._on_expand_changed)
-        layout.addWidget(self._tree, stretch=1)
+        self._stack.addWidget(self._tree)
+
+        self._icons = _IconList()
+        self._icons.setViewMode(QListWidget.ViewMode.IconMode)
+        self._icons.setIconSize(QSize(96, 96))
+        self._icons.setGridSize(QSize(120, 116))
+        self._icons.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._icons.setMovement(QListWidget.Movement.Static)
+        self._icons.setWordWrap(True)
+        self._icons.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._icons.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._icons.customContextMenuRequested.connect(self._on_icon_context_menu)
+        self._icons.itemDoubleClicked.connect(self._on_icon_double_clicked)
+        self._icons.currentItemChanged.connect(self._on_icon_selection)
+        self._icons.delete_requested.connect(self._delete_clips)
+        self._stack.addWidget(self._icons)
+
+        layout.addWidget(self._stack, stretch=1)
 
         btn_row = QHBoxLayout()
         self._new_folder_btn = QPushButton("New Folder")
@@ -124,6 +190,12 @@ class FilterPanel(QWidget):
         btn_row.addWidget(self._new_tag_btn)
         layout.addLayout(btn_row)
 
+        # 保存済みの表示モードを復元
+        mode = self._settings.value(self._MODE_KEY, "tree", type=str)
+        self._view_combo.setCurrentIndex(self._ICONS if mode == "icons" else self._TREE)
+        self._stack.setCurrentIndex(self._view_combo.currentIndex())
+        self._update_toolbar()
+
     # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
@@ -131,9 +203,14 @@ class FilterPanel(QWidget):
     def set_library(self, library, db) -> None:
         self._library = library
         self._db = db
+        self._cur_dir = ""
         self.rebuild()
 
     def rebuild(self) -> None:
+        self._rebuild_tree()
+        self._populate_icons()
+
+    def _rebuild_tree(self) -> None:
         self._tree.blockSignals(True)
         self._tree.clear()
 
@@ -262,6 +339,126 @@ class FilterPanel(QWidget):
     def _on_double_clicked(self, item, _column) -> None:
         if item is not None and item.data(0, _ROLE_KIND) == "clip":
             self.clip_activated.emit(int(item.data(0, _ROLE_ID)))
+
+    # ------------------------------------------------------------------
+    # アイコン（サムネイル）表示
+    # ------------------------------------------------------------------
+
+    def _on_view_mode_changed(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        self._settings.setValue(
+            self._MODE_KEY, "icons" if index == self._ICONS else "tree"
+        )
+        self._update_toolbar()
+
+    def _update_toolbar(self) -> None:
+        icon_mode = self._stack.currentIndex() == self._ICONS
+        self._up_btn.setVisible(icon_mode)
+        self._path_label.setVisible(icon_mode)
+        if icon_mode:
+            self._up_btn.setEnabled(bool(self._cur_dir))
+            if self._library is not None:
+                self._path_label.setText(self._cur_dir or f"{self._library.name}  (root)")
+
+    def _dir_icon(self):
+        return self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+
+    def _file_icon(self):
+        return self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+
+    def _clip_icon(self, clip) -> QIcon:
+        if clip.thumbnail_path and self._library is not None:
+            tp = self._library.to_abs(clip.thumbnail_path)
+            if tp.is_file():
+                pix = QPixmap(str(tp))
+                if not pix.isNull():
+                    return QIcon(pix)
+        return self._file_icon()
+
+    def _add_icon_item(self, text, kind, item_id, icon) -> QListWidgetItem:
+        it = QListWidgetItem(icon, text)
+        it.setData(_IROLE_KIND, kind)
+        it.setData(_IROLE_ID, item_id)
+        it.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self._icons.addItem(it)
+        return it
+
+    def _populate_icons(self) -> None:
+        self._icons.clear()
+        if self._library is None:
+            self._update_toolbar()
+            return
+        cur = self._cur_dir
+
+        # 「上の階層」
+        if cur:
+            parent = str(PurePosixPath(cur).parent)
+            if parent == ".":
+                parent = ""
+            up = self._add_icon_item("..", "up", parent,
+                                     self.style().standardIcon(
+                                         QStyle.StandardPixmap.SP_FileDialogToParent))
+            up.setToolTip("上の階層へ")
+
+        # サブフォルダ（直下のみ）
+        for rel in self._library.list_dirs():
+            p = str(PurePosixPath(rel).parent)
+            if p == ".":
+                p = ""
+            if p == cur:
+                self._add_icon_item(rel.split("/")[-1], "folder", rel, self._dir_icon())
+
+        # ファイル（直下のみ）
+        if self._db is not None:
+            for clip in self._db.list_clips(order_by="title ASC"):
+                p = str(PurePosixPath(clip.rel_path).parent)
+                if p == ".":
+                    p = ""
+                if p == cur:
+                    it = self._add_icon_item(clip.title, "clip", clip.id, self._clip_icon(clip))
+                    if clip.missing:
+                        it.setForeground(Qt.GlobalColor.gray)
+        self._update_toolbar()
+
+    def _go_up(self) -> None:
+        if not self._cur_dir:
+            return
+        parent = str(PurePosixPath(self._cur_dir).parent)
+        self._cur_dir = "" if parent == "." else parent
+        self._populate_icons()
+
+    def _on_icon_double_clicked(self, item: QListWidgetItem) -> None:
+        kind = item.data(_IROLE_KIND)
+        if kind in ("up", "folder"):
+            self._cur_dir = item.data(_IROLE_ID) or ""
+            self._populate_icons()
+        elif kind == "clip":
+            self.clip_activated.emit(int(item.data(_IROLE_ID)))
+
+    def _on_icon_selection(self, current, _previous) -> None:
+        if current is not None and current.data(_IROLE_KIND) == "clip":
+            self.clip_selected.emit(int(current.data(_IROLE_ID)))
+
+    def _on_icon_context_menu(self, pos) -> None:
+        item = self._icons.itemAt(pos)
+        menu = QMenu(self)
+        if item is None or item.data(_IROLE_KIND) == "up":
+            # 余白／.. → 現在フォルダに対する操作
+            cur_abs = (str(self._library.root) if not self._cur_dir
+                       else str(self._library.to_abs(self._cur_dir)))
+            self._add_folder_actions(menu, self._cur_dir, cur_abs)
+        elif item.data(_IROLE_KIND) == "folder":
+            rel = item.data(_IROLE_ID)
+            self._add_folder_actions(menu, rel, str(self._library.to_abs(rel)))
+        elif item.data(_IROLE_KIND) == "clip":
+            cid = int(item.data(_IROLE_ID))
+            ids = [int(i.data(_IROLE_ID)) for i in self._icons.selectedItems()
+                   if i.data(_IROLE_KIND) == "clip"]
+            if cid not in ids:
+                ids = [cid]
+            self._add_clip_actions(menu, cid, ids)
+        if not menu.isEmpty():
+            menu.exec(self._icons.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
     # タグ / 欠落でツリーを絞り込み（実フォルダはそのまま辿る）
@@ -421,8 +618,16 @@ class FilterPanel(QWidget):
     def _new_folder(self) -> None:
         if self._library is None:
             return
-        kind, ident = self._selected()
-        parent_rel = ident if kind == "folder" else ""
+        if self._stack.currentIndex() == self._ICONS:
+            parent_rel = self._cur_dir
+        else:
+            kind, ident = self._selected()
+            parent_rel = ident if kind == "folder" else ""
+        self._new_folder_in(parent_rel)
+
+    def _new_folder_in(self, parent_rel: str) -> None:
+        if self._library is None:
+            return
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
         if not (ok and name.strip()):
             return
@@ -433,6 +638,53 @@ class FilterPanel(QWidget):
             return
         self.rebuild()
         self.library_changed.emit()
+
+    # ------------------------------------------------------------------
+    # コンテキストメニュー（ツリー / アイコン 共通の組み立て）
+    # ------------------------------------------------------------------
+
+    def _add_folder_actions(self, menu, rel: str, abs_dir: str) -> None:
+        menu.addAction("Download here...").triggered.connect(
+            lambda: self.download_here_requested.emit(abs_dir)
+        )
+        menu.addAction("New subfolder...").triggered.connect(
+            lambda: self._new_folder_in(rel)
+        )
+        if rel:
+            menu.addAction("Rename...").triggered.connect(
+                lambda: self._rename_folder(rel)
+            )
+        menu.addAction("Open in Explorer").triggered.connect(
+            lambda: self.open_folder_requested.emit(abs_dir)
+        )
+
+    def _add_clip_actions(self, menu, cid: int, ids: list[int]) -> None:
+        menu.addAction("Play").triggered.connect(lambda: self.clip_activated.emit(cid))
+        menu.addAction("Open externally").triggered.connect(
+            lambda: self.open_external_requested.emit(self._abs(cid))
+        )
+        menu.addAction("Open file location").triggered.connect(
+            lambda: self.open_location_requested.emit(self._abs(cid))
+        )
+        menu.addSeparator()
+        tags = self._db.list_tags() if self._db else []
+        tag_menu = menu.addMenu("Tags")
+        if not tags:
+            tag_menu.addAction("(no tags — use New Tag)").setEnabled(False)
+        else:
+            assigned = {t.id for t in self._db.tags_for_clip(cid)}
+            for t in tags:
+                a = tag_menu.addAction(t.name)
+                a.setCheckable(True)
+                a.setChecked(t.id in assigned)
+                a.triggered.connect(
+                    lambda checked, tid=t.id: self._toggle_tag(cid, tid, checked)
+                )
+        menu.addSeparator()
+        menu.addAction("Rename...").triggered.connect(lambda: self._rename_clip(cid))
+        menu.addAction("Duplicate").triggered.connect(lambda: self._duplicate_clip(cid))
+        label = "Delete..." if len(ids) == 1 else f"Delete {len(ids)} files..."
+        menu.addAction(label).triggered.connect(lambda: self._delete_clips(ids))
 
     def _new_tag(self) -> None:
         if self._db is None:
@@ -457,50 +709,13 @@ class FilterPanel(QWidget):
                 str(self._library.root) if not item_id
                 else str(self._library.to_abs(item_id))
             )
-            menu.addAction("Download here...").triggered.connect(
-                lambda: self.download_here_requested.emit(abs_dir)
-            )
-            menu.addAction("New subfolder...").triggered.connect(self._new_folder)
-            if item_id:
-                menu.addAction("Rename...").triggered.connect(
-                    lambda: self._rename_folder(item_id)
-                )
-            menu.addAction("Open in Explorer").triggered.connect(
-                lambda: self.open_folder_requested.emit(abs_dir)
-            )
+            self._add_folder_actions(menu, item_id or "", abs_dir)
         elif kind == "clip":
             cid = int(item_id)
-            menu.addAction("Play").triggered.connect(lambda: self.clip_activated.emit(cid))
-            menu.addAction("Open externally").triggered.connect(
-                lambda: self.open_external_requested.emit(self._abs(cid))
-            )
-            menu.addAction("Open file location").triggered.connect(
-                lambda: self.open_location_requested.emit(self._abs(cid))
-            )
-            menu.addSeparator()
-            # Tags ▸（チェックで付け外し）
-            tags = self._db.list_tags() if self._db else []
-            tag_menu = menu.addMenu("Tags")
-            if not tags:
-                tag_menu.addAction("(no tags — use New Tag)").setEnabled(False)
-            else:
-                assigned = {t.id for t in self._db.tags_for_clip(cid)}
-                for t in tags:
-                    a = tag_menu.addAction(t.name)
-                    a.setCheckable(True)
-                    a.setChecked(t.id in assigned)
-                    a.triggered.connect(
-                        lambda checked, tid=t.id: self._toggle_tag(cid, tid, checked)
-                    )
-            menu.addSeparator()
-            menu.addAction("Rename...").triggered.connect(lambda: self._rename_clip(cid))
-            menu.addAction("Duplicate").triggered.connect(lambda: self._duplicate_clip(cid))
-            # 右クリックしたファイルを選択に含めて、選択中のクリップをまとめて削除
             ids = self._selected_clip_ids()
             if cid not in ids:
                 ids = [cid]
-            label = "Delete..." if len(ids) == 1 else f"Delete {len(ids)} files..."
-            menu.addAction(label).triggered.connect(lambda: self._delete_clips(ids))
+            self._add_clip_actions(menu, cid, ids)
         elif kind == "tag":
             menu.addAction("Rename...").triggered.connect(
                 lambda: self._rename_tag(item, item_id)
