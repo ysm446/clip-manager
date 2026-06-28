@@ -21,10 +21,10 @@ from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
 from core.enrich_worker import EnrichWorker
 from core.download_queue import DownloadQueue, DownloadRequest
-from ui.library_view import LibraryView
 from ui.filter_panel import FilterPanel
 from ui.queue_view import QueueView
 from ui.player_widget import PlayerWidget
+from ui.clip_details import ClipDetailsPanel
 from ui.download_dialog import DownloadDialog
 from ui.settings_dialog import SettingsDialog
 
@@ -56,30 +56,33 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self.setCentralWidget(self._tabs)
 
-        # --- Library tab: [ folder/tag tree | clip list | player ] ---
-        self._filter_panel = FilterPanel()
-        self._library_view = LibraryView()
-        self._player = PlayerWidget()
-        self._library_view.play_requested.connect(self._player.play)
-        self._library_view.open_external_requested.connect(self._open_external)
+        # --- Library tab: [ explorer | (player / details) ] ---
+        self._filter_panel = FilterPanel()       # 左：エクスプローラ（唯一のブラウザ）
+        self._player = PlayerWidget()            # 右上：プレイヤー
+        self._details = ClipDetailsPanel()       # 右下：選択中クリップの詳細
+
         self._player.open_external_requested.connect(self._open_external)
-        self._library_view.enrich_requested.connect(self._enrich_library)
-        self._library_view.open_location_requested.connect(self._open_location)
-        self._library_view.library_modified.connect(self._update_library_status)
-        self._filter_panel.filter_changed.connect(self._on_filter_changed)
-        self._filter_panel.library_changed.connect(self._library_view.refresh)
         self._filter_panel.clip_activated.connect(self._play_clip_id)
-        self._filter_panel.download_here_requested.connect(self._open_download_dialog)
+        self._filter_panel.clip_selected.connect(self._show_details)
+        self._filter_panel.open_external_requested.connect(self._open_external)
+        self._filter_panel.open_location_requested.connect(self._open_location)
         self._filter_panel.open_folder_requested.connect(self._open_folder)
+        self._filter_panel.download_here_requested.connect(self._open_download_dialog)
+        self._filter_panel.library_changed.connect(self._update_library_status)
+
+        right_split = QSplitter(Qt.Orientation.Vertical)
+        right_split.addWidget(self._player)
+        right_split.addWidget(self._details)
+        right_split.setStretchFactor(0, 3)
+        right_split.setStretchFactor(1, 2)
+        right_split.setSizes([520, 300])
 
         library_split = QSplitter(Qt.Orientation.Horizontal)
         library_split.addWidget(self._filter_panel)
-        library_split.addWidget(self._library_view)
-        library_split.addWidget(self._player)
+        library_split.addWidget(right_split)
         library_split.setStretchFactor(0, 0)
         library_split.setStretchFactor(1, 1)
-        library_split.setStretchFactor(2, 1)
-        library_split.setSizes([240, 640, 680])
+        library_split.setSizes([320, 960])
         self._tabs.addTab(library_split, "Library")
 
         # --- Queue tab: [ queue table | log ] ---
@@ -115,6 +118,9 @@ class MainWindow(QMainWindow):
             self._download_to_root
         )
         library_menu.addAction("Rescan Library").triggered.connect(self._rescan_library)
+        library_menu.addAction("Generate thumbnails & metadata").triggered.connect(
+            self._enrich_library
+        )
 
         self.statusBar().showMessage("Ready")
 
@@ -162,7 +168,6 @@ class MainWindow(QMainWindow):
             self._on_log("[Library] Downloaded file is outside the library — not registered.")
         else:
             self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
-            self._library_view.refresh()
             self._filter_panel.rebuild()   # ツリーに新ファイルを反映（開閉状態は保持）
             self._update_library_status()
 
@@ -190,8 +195,8 @@ class MainWindow(QMainWindow):
         self._active_lib = self._libraries.active_library()
         if self._active_lib is not None:
             self._db = self._active_lib.open_db()
-        self._library_view.set_library(self._active_lib, self._db)
         self._filter_panel.set_library(self._active_lib, self._db)
+        self._details.set_library(self._active_lib)
         self._update_library_status()
 
     def _update_library_status(self) -> None:
@@ -265,8 +270,7 @@ class MainWindow(QMainWindow):
     @Slot(int, int)
     def _on_scan_finished(self, added: int, missing: int) -> None:
         self._on_log(f"[Library] Scan finished: {added} new, {missing} missing.")
-        self._filter_panel.rebuild()    # 新しい実フォルダをツリーに反映
-        self._library_view.refresh()
+        self._filter_panel.rebuild()    # 新しい実フォルダ/ファイルをツリーに反映
         self._update_library_status()
 
     @Slot()
@@ -288,20 +292,23 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def _on_enrich_finished(self, updated: int) -> None:
         self._on_log(f"[Library] Enrich finished: {updated} clip(s) updated.")
-        self._library_view.refresh()
+        self._filter_panel.rebuild()
         self._update_library_status()
 
-    @Slot(dict)
-    def _on_filter_changed(self, flt: dict) -> None:
-        self._library_view.set_filter(
-            folder_path=flt.get("folder_path"),
-            tag_id=flt.get("tag_id"),
-            missing_only=flt.get("missing_only", False),
-        )
+    @Slot(int)
+    def _show_details(self, clip_id: int) -> None:
+        """選択中クリップの詳細を右下パネルに表示する。"""
+        if self._db is None:
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            self._details.clear()
+            return
+        self._details.show_clip(clip, self._db.tags_for_clip(clip_id))
 
     @Slot(int)
     def _play_clip_id(self, clip_id: int) -> None:
-        """ツリーのファイルをアプリ内プレイヤーで再生する。"""
+        """ツリーのファイルをアプリ内プレイヤーで再生し、詳細も表示する。"""
         if self._db is None or self._active_lib is None:
             return
         clip = self._db.get_clip(clip_id)
@@ -313,6 +320,7 @@ class MainWindow(QMainWindow):
             if clip.subtitle_path else ""
         )
         self._player.play(media, subtitle)
+        self._show_details(clip_id)
 
     @Slot(str)
     def _open_external(self, abs_path: str) -> None:

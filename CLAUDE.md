@@ -44,19 +44,26 @@ core/
   download_queue.py      # DownloadQueue(順次) + DownloadRequest。worker_factory 注入可
   subtitles.py           # parse_srt()/cue_at() — 外部 .srt パーサ（純関数）
 ui/
-  main_window.py         # MainWindow — Library/Queue のタブ。Library は3ペイン QSplitter
-  filter_panel.py        # FilterPanel — 実フォルダ/タグツリー(配下ファイルも表示)・
-                         #   D&Dでファイルを別フォルダへ移動・絞り込み・Download here
-  library_view.py        # LibraryView — 詳細表/サムネイル切替・検索・付与・再生要求
+  main_window.py         # MainWindow — Library/Queue のタブ
+  filter_panel.py        # FilterPanel — エクスプローラ（唯一のブラウザ）。実フォルダ＋
+                         #   配下ファイル＋タグ。D&D移動・削除・改名・複製・再生・タグ付与・
+                         #   タグ/欠落でツリー絞り込み・Download here・開閉状態の永続化
+  clip_details.py        # ClipDetailsPanel — 選択中クリップの詳細（サムネ＋メタ＋タグ）
   player_widget.py       # PlayerWidget — QtMultimedia 動画再生＋.srt オーバーレイ
   download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
   queue_view.py          # QueueView — ダウンロードキューの進捗一覧
+  library_view.py        # （現在は未使用。fmt_* ヘルパ＋将来のサムネイル一覧用に残置）
   settings_dialog.py     # SettingsDialog
 ```
 
-Library タブは `QSplitter[FilterPanel | LibraryView | PlayerWidget]`（3ペイン）。
-~1920×1080 の一画面で階層／サムネイル／再生を出す。再生はアプリ内プレイヤー、
-コーデック非対応時は「Open externally」で OS 既定プレイヤーへフォールバック。
+Library タブのレイアウトは `QSplitter[ FilterPanel | QSplitter(PlayerWidget / ClipDetailsPanel) ]`
+（**左：エクスプローラ｜右上：プレイヤー｜右下：詳細**）。エクスプローラが唯一の
+ブラウザで、クリップ操作（再生・移動 D&D・削除・改名・複製・タグ付与）は右クリック/
+キーで行う。再生はアプリ内プレイヤー、コーデック非対応時は「Open externally」で
+OS 既定プレイヤーへフォールバック。メタ補完/サムネイル生成は Library メニューから。
+
+> **将来**: エクスプローラの表示モード切替（ツリー／サムネイル・アイコン表示で
+> 「上の階層」エントリを先頭に）を追加予定。
 
 ### フォルダ階層は実フォルダ（重要な設計）
 

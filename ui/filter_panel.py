@@ -81,11 +81,13 @@ class _FolderTree(QTreeWidget):
 
 
 class FilterPanel(QWidget):
-    filter_changed = Signal(dict)
     clip_activated = Signal(int)             # ファイルのダブルクリック（再生）
+    clip_selected = Signal(int)              # ファイル選択（詳細表示）
     download_here_requested = Signal(str)    # 保存先（絶対パス）
     open_folder_requested = Signal(str)      # フォルダ（絶対パス）
-    library_changed = Signal()               # 構成が変わった（一覧を更新させる）
+    open_external_requested = Signal(str)    # クリップ（絶対パス）
+    open_location_requested = Signal(str)    # クリップ（絶対パス）
+    library_changed = Signal()               # 構成が変わった
 
     _EXPANDED_KEY = "ui/expanded_folders"
 
@@ -249,22 +251,65 @@ class FilterPanel(QWidget):
         kind = current.data(0, _ROLE_KIND)
         item_id = current.data(0, _ROLE_ID)
         if kind == "folder":
-            self.filter_changed.emit(
-                {"folder_path": item_id or None, "tag_id": None, "missing_only": False}
-            )
+            self._apply_filter()                       # フォルダはツリーで辿る（全表示）
         elif kind == "tag":
-            self.filter_changed.emit(
-                {"folder_path": None, "tag_id": item_id, "missing_only": False}
-            )
+            self._apply_filter(tag_id=item_id)         # タグでツリーを絞り込み
         elif kind == "missing":
-            self.filter_changed.emit(
-                {"folder_path": None, "tag_id": None, "missing_only": True}
-            )
-        # clip 選択はフィルタを変えない（ダブルクリックで再生）
+            self._apply_filter(missing_only=True)
+        elif kind == "clip":
+            self.clip_selected.emit(int(item_id))      # 詳細表示
 
     def _on_double_clicked(self, item, _column) -> None:
         if item is not None and item.data(0, _ROLE_KIND) == "clip":
             self.clip_activated.emit(int(item.data(0, _ROLE_ID)))
+
+    # ------------------------------------------------------------------
+    # タグ / 欠落でツリーを絞り込み（実フォルダはそのまま辿る）
+    # ------------------------------------------------------------------
+
+    def _all_items(self):
+        stack = [self._tree.topLevelItem(i) for i in range(self._tree.topLevelItemCount())]
+        while stack:
+            it = stack.pop()
+            yield it
+            stack.extend(it.child(k) for k in range(it.childCount()))
+
+    def _apply_filter(self, tag_id=None, missing_only=False) -> None:
+        if (tag_id is None and not missing_only) or self._db is None:
+            for it in self._all_items():
+                it.setHidden(False)
+            return
+        if missing_only:
+            allowed = {c.id for c in self._db.list_clips(missing_only=True)}
+        else:
+            allowed = {c.id for c in self._db.list_clips(tag_id=tag_id)}
+        for it in self._all_items():
+            if it.data(0, _ROLE_KIND) == "clip":
+                it.setHidden(int(it.data(0, _ROLE_ID)) not in allowed)
+        self._hide_empty_folders()
+
+    def _hide_empty_folders(self) -> None:
+        def visit(item) -> bool:
+            has_visible = False
+            for k in range(item.childCount()):
+                child = item.child(k)
+                ckind = child.data(0, _ROLE_KIND)
+                if ckind == "folder":
+                    has_visible = visit(child) or has_visible
+                elif ckind == "clip" and not child.isHidden():
+                    has_visible = True
+            if item.data(0, _ROLE_ID):       # ルート("")以外
+                item.setHidden(not has_visible)
+            return has_visible
+
+        for i in range(self._tree.topLevelItemCount()):
+            top = self._tree.topLevelItem(i)
+            if top.data(0, _ROLE_KIND) == "folder":
+                visit(top)
+
+    def _abs(self, clip_id) -> str:
+        c = self._db.get_clip(clip_id) if self._db else None
+        return str(self._library.to_abs(c.rel_path)) if c and self._library else ""
 
     def _selected_clip_ids(self) -> list[int]:
         return [
@@ -300,6 +345,42 @@ class FilterPanel(QWidget):
                 failed.append(f"{c.title}: {e}")
         if failed:
             QMessageBox.warning(self, "Delete failed", "\n".join(failed))
+        self.rebuild()
+        self.library_changed.emit()
+
+    def _toggle_tag(self, clip_id: int, tag_id: int, checked: bool) -> None:
+        if self._db is None:
+            return
+        if checked:
+            self._db.assign_tag(clip_id, tag_id)
+        else:
+            self._db.unassign_tag(clip_id, tag_id)
+        self.library_changed.emit()
+
+    def _rename_clip(self, clip_id: int) -> None:
+        clip = self._db.get_clip(clip_id) if self._db else None
+        if clip is None:
+            return
+        current = PurePosixPath(clip.rel_path).stem
+        name, ok = QInputDialog.getText(
+            self, "Rename", "New name (without extension):", text=current
+        )
+        if not (ok and name.strip()):
+            return
+        try:
+            self._library.rename_clip(self._db, clip_id, name)
+        except Exception as e:
+            QMessageBox.warning(self, "Rename failed", str(e))
+            return
+        self.rebuild()
+        self.library_changed.emit()
+
+    def _duplicate_clip(self, clip_id: int) -> None:
+        try:
+            self._library.duplicate_clip(self._db, clip_id)
+        except Exception as e:
+            QMessageBox.warning(self, "Duplicate failed", str(e))
+            return
         self.rebuild()
         self.library_changed.emit()
 
@@ -388,14 +469,36 @@ class FilterPanel(QWidget):
                 lambda: self.open_folder_requested.emit(abs_dir)
             )
         elif kind == "clip":
-            menu.addAction("Play").triggered.connect(
-                lambda: self.clip_activated.emit(int(item_id))
+            cid = int(item_id)
+            menu.addAction("Play").triggered.connect(lambda: self.clip_activated.emit(cid))
+            menu.addAction("Open externally").triggered.connect(
+                lambda: self.open_external_requested.emit(self._abs(cid))
+            )
+            menu.addAction("Open file location").triggered.connect(
+                lambda: self.open_location_requested.emit(self._abs(cid))
             )
             menu.addSeparator()
+            # Tags ▸（チェックで付け外し）
+            tags = self._db.list_tags() if self._db else []
+            tag_menu = menu.addMenu("Tags")
+            if not tags:
+                tag_menu.addAction("(no tags — use New Tag)").setEnabled(False)
+            else:
+                assigned = {t.id for t in self._db.tags_for_clip(cid)}
+                for t in tags:
+                    a = tag_menu.addAction(t.name)
+                    a.setCheckable(True)
+                    a.setChecked(t.id in assigned)
+                    a.triggered.connect(
+                        lambda checked, tid=t.id: self._toggle_tag(cid, tid, checked)
+                    )
+            menu.addSeparator()
+            menu.addAction("Rename...").triggered.connect(lambda: self._rename_clip(cid))
+            menu.addAction("Duplicate").triggered.connect(lambda: self._duplicate_clip(cid))
             # 右クリックしたファイルを選択に含めて、選択中のクリップをまとめて削除
             ids = self._selected_clip_ids()
-            if int(item_id) not in ids:
-                ids = [int(item_id)]
+            if cid not in ids:
+                ids = [cid]
             label = "Delete..." if len(ids) == 1 else f"Delete {len(ids)} files..."
             menu.addAction(label).triggered.connect(lambda: self._delete_clips(ids))
         elif kind == "tag":
