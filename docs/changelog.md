@@ -2,6 +2,19 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-06-28（Phase 1: DB基盤・ライブラリ管理・自動登録）
+
+- `core/models.py` / `core/database.py`（SQLite スキーマ v1・WAL・DAO）/
+  `core/library.py`（ルート⇄相対パス・走査取り込み・欠落検知）/
+  `core/libraries.py`（複数ライブラリの登録・切替）/ `core/scan_worker.py`
+  （走査用 QThread）を追加。
+- `core/downloader.py` に `download_succeeded(dict)` を追加し、DL完了時に
+  メタ付きでライブラリ DB へ自動登録（主スレッドで書き込み）。
+- `ui/main_window.py` に Library メニュー（Open/Create・Switch・Rescan）と
+  ライブラリ状態表示を追加。アクティブライブラリがあれば保存先＝ルート。
+- アプリ識別子を ClipManager / Clip Manager に変更（ウィンドウ名も更新）。
+- バックエンド単体テスト・MainWindow 統合スモークテストが全通過。
+
 ## 2026-06-28（Phase 0: ベース移植）
 
 - clip-downloader のソース一式を移植（`main.py` / `core/` / `ui/`）。

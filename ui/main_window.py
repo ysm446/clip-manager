@@ -13,10 +13,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QFileDialog,
     QStatusBar,
+    QInputDialog,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Slot
 from core.downloader import DownloadWorker, is_audio_format, SAVE_FORMATS
 from core.settings import AppSettings
+from core.libraries import LibraryManager
+from core.library import Library
+from core.database import LibraryDatabase
+from core.scan_worker import ScanWorker
 from ui.settings_dialog import SettingsDialog
 
 
@@ -25,9 +31,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._settings = AppSettings()
         self._worker: DownloadWorker | None = None
+        # --- Library state ---
+        self._libraries = LibraryManager()
+        self._active_lib: Library | None = None
+        self._db: LibraryDatabase | None = None  # main-thread connection
+        self._scan_worker: ScanWorker | None = None
         self._init_ui()
+        self._load_active_library()
         self._restore_geometry()
-        self.setWindowTitle("Clip Downloader")
+        self.setWindowTitle("Clip Manager")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -134,6 +146,18 @@ class MainWindow(QMainWindow):
         quit_action = file_menu.addAction("Quit")
         quit_action.triggered.connect(self.close)
 
+        library_menu = self.menuBar().addMenu("Library")
+        library_menu.addAction("Open / Create Library...").triggered.connect(
+            self._open_library
+        )
+        library_menu.addAction("Switch Library...").triggered.connect(
+            self._switch_library
+        )
+        library_menu.addSeparator()
+        library_menu.addAction("Rescan Library").triggered.connect(
+            self._rescan_library
+        )
+
         # --- Status bar ---
         self.statusBar().showMessage("Ready")
 
@@ -160,7 +184,7 @@ class MainWindow(QMainWindow):
 
         self._worker = DownloadWorker(
             url=url,
-            output_dir=self._settings.output_dir,
+            output_dir=self._download_output_dir(),
             quality=self._quality_combo.currentText(),
             codec=self._codec_combo.currentText(),
             write_subtitles=self._subtitle_check.isChecked(),
@@ -168,9 +192,17 @@ class MainWindow(QMainWindow):
         )
         self._worker.progress_updated.connect(self._on_progress)
         self._worker.log_message.connect(self._on_log)
+        self._worker.download_succeeded.connect(self._on_download_succeeded)
         self._worker.download_finished.connect(self._on_finished)
         self._worker.start()
         self.statusBar().showMessage("Downloading...")
+
+    def _download_output_dir(self) -> str:
+        """Active library root if set (so clips land inside and auto-register),
+        otherwise the configured default download folder."""
+        if self._active_lib is not None:
+            return str(self._active_lib.root)
+        return self._settings.output_dir
 
     @Slot(str)
     def _on_format_changed(self, fmt: str) -> None:
@@ -226,6 +258,105 @@ class MainWindow(QMainWindow):
             self._subtitle_check.setChecked(self._settings.write_subtitles)
 
     # ------------------------------------------------------------------
+    # Library
+    # ------------------------------------------------------------------
+
+    def _load_active_library(self) -> None:
+        """Open the active library's DB on the main thread (if any)."""
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+        self._active_lib = self._libraries.active_library()
+        if self._active_lib is not None:
+            self._db = self._active_lib.open_db()
+            self._folder_label.setText(str(self._active_lib.root))
+        self._update_library_status()
+
+    def _update_library_status(self) -> None:
+        if self._active_lib is None:
+            self.statusBar().showMessage("No library — open one from the Library menu")
+            return
+        count = self._db.count_clips() if self._db else 0
+        self.statusBar().showMessage(
+            f"Library: {self._active_lib.name}  ({count} clips)  —  {self._active_lib.root}"
+        )
+
+    @Slot()
+    def _open_library(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Select or create a library folder", self._settings.output_dir
+        )
+        if not path:
+            return
+        info = self._libraries.add(path, make_active=True)
+        self._on_log(f"[Library] Opened '{info.name}' at {info.root}")
+        self._load_active_library()
+
+    @Slot()
+    def _switch_library(self) -> None:
+        infos = self._libraries.list()
+        if not infos:
+            QMessageBox.information(
+                self, "No libraries",
+                "No libraries registered yet. Use 'Open / Create Library...' first.",
+            )
+            return
+        labels = [f"{i.name}  ({i.root})" for i in infos]
+        current = self._libraries.active_root()
+        current_idx = next(
+            (n for n, i in enumerate(infos) if i.root == current), 0
+        )
+        label, ok = QInputDialog.getItem(
+            self, "Switch Library", "Active library:", labels, current_idx, False
+        )
+        if ok and label:
+            chosen = infos[labels.index(label)]
+            self._libraries.set_active(chosen.root)
+            self._load_active_library()
+
+    @Slot()
+    def _rescan_library(self) -> None:
+        if self._active_lib is None:
+            QMessageBox.information(
+                self, "No library", "Open a library before scanning."
+            )
+            return
+        if self._scan_worker and self._scan_worker.isRunning():
+            return
+        self._scan_worker = ScanWorker(
+            str(self._active_lib.root), self._active_lib.name
+        )
+        self._scan_worker.log_message.connect(self._on_log)
+        self._scan_worker.progress.connect(
+            lambda n, p: self.statusBar().showMessage(f"Scanning... ({n}) {p}")
+        )
+        self._scan_worker.finished_scan.connect(self._on_scan_finished)
+        self._scan_worker.start()
+
+    @Slot(int, int)
+    def _on_scan_finished(self, added: int, missing: int) -> None:
+        self._on_log(f"[Library] Scan finished: {added} new, {missing} missing.")
+        self._update_library_status()
+
+    @Slot(dict)
+    def _on_download_succeeded(self, payload: dict) -> None:
+        """Register a freshly downloaded clip into the active library DB."""
+        if self._active_lib is None or self._db is None:
+            return
+        try:
+            clip_id = self._active_lib.register_download(self._db, payload)
+        except Exception as e:  # never let registration crash the UI
+            self._on_log(f"[Library] Registration failed: {e}")
+            return
+        if clip_id is None:
+            self._on_log(
+                "[Library] Downloaded file is outside the active library — not registered."
+            )
+        else:
+            self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
+            self._update_library_status()
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -250,4 +381,9 @@ class MainWindow(QMainWindow):
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(3000)
+        if self._scan_worker and self._scan_worker.isRunning():
+            self._scan_worker.wait(3000)
+        if self._db is not None:
+            self._db.close()
+            self._db = None
         super().closeEvent(event)

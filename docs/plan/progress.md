@@ -4,11 +4,30 @@
 
 ## 現在地（サマリ）
 
-- **フェーズ**: Phase 0 完了。次は Phase 1（DB基盤・取り込み）。
-- **状態**: clip-downloader のソース一式を移植済み。`.venv`（Python 3.13.11）で
-  起動を確認（GUI構築・イベントループ正常終了・フォーマット生成ロジック動作）。
+- **フェーズ**: Phase 1 完了。次は Phase 2（ライブラリ一覧UI）。
+- **状態**: SQLite 基盤・複数ライブラリ管理・DL自動登録・ルート走査取り込みを実装。
+  バックエンド単体テストと MainWindow 統合スモークテストが全通過。
+  アプリ識別子を ClipManager / Clip Manager へ変更（ウィンドウ名も "Clip Manager"）。
 
 ## 完了済み
+
+- 2026-06-28: **Phase 1 完了**。
+  - `core/models.py`（Clip/Folder/Tag/LibraryInfo）、`core/database.py`
+    （`LibraryDatabase`: スキーマ v1・WAL・clips/folders/tags の DAO）、
+    `core/library.py`（`Library`: ルート⇄相対パス変換・`scan`取り込み・
+    `register_download`・`refresh_missing`）、`core/libraries.py`
+    （`LibraryManager`: 複数ルートの登録/切替を QSettings 管理、テスト用に
+    QSettings 注入可）、`core/scan_worker.py`（走査用 QThread、専用DB接続）を追加。
+  - `core/downloader.py` に `download_succeeded(dict)` シグナルを追加し、yt-dlp の
+    info dict から最終ファイルパス＋メタを抽出。主スレッドで DB へ自動登録。
+  - `ui/main_window.py` に Library メニュー（Open/Create・Switch・Rescan）と
+    ライブラリ状態表示を追加。アクティブライブラリがあれば保存先＝ルート。
+  - 識別子変更: `AppSettings.ORG/APP` と `main.py` を ClipManager / Clip Manager に。
+  - 検証: バックエンド test（schema/scan冪等/相対パス/register/folder/tag/検索/
+    missing/Manager）と MainWindow 統合 test（自動登録・ライブラリ外拒否・
+    クリーン終了）が全通過。全モジュール py_compile OK。
+  - 補足: 取り込みは基本メタのみ（duration/解像度/コーデックは None）。ffprobe
+    による補完は後続フェーズ（メタ拡充）で対応予定。
 
 - 2026-06-28: **Phase 0 完了**。clip-downloader のソースを移植
   （`main.py` / `core/{__init__,settings,downloader}.py` /
@@ -31,10 +50,10 @@
 ## 未完了（次にやること）
 
 - [x] **Phase 0**: clip-downloader のソース一式を移植し、`.venv` で起動を確認。
-- [ ] **Phase 1**: `core/database.py` / `core/models.py` / `core/libraries.py`
-      を作成。ライブラリ（複数ルート）の登録・切替、DL完了時にDBへ自動登録、
-      ルート走査による既存ファイル取り込み。アプリ識別子を ClipManager へ変更。
-- [ ] **Phase 2**: `ui/library_view.py`（サムネイル/詳細）。
+- [x] **Phase 1**: SQLite基盤・複数ライブラリ管理・DL自動登録・ルート走査取り込み・
+      識別子の ClipManager 化を実装し、テストで検証。
+- [ ] **Phase 2**: `ui/library_view.py`（サムネイル/詳細）。取り込み済みクリップを
+      一覧表示。あわせて duration/解像度/コーデックの ffprobe 補完を検討。
 - [ ] **Phase 3**: フォルダ/タグ・検索（`ui/filter_panel.py`）。
 - [ ] **Phase 4**: ファイル操作（リネーム/移動/削除/複製）。
 - [ ] **Phase 5**: `ui/player_widget.py`（アプリ内プレイヤー・字幕）。

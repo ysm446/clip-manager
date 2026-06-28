@@ -28,54 +28,46 @@
 ## アーキテクチャ
 
 ```
-main.py                  # QApplication 初期化・起動
-core/settings.py         # AppSettings — QSettings ラッパー（設定の読み書き）
-core/downloader.py       # DownloadWorker(QThread) + build_format_string()
-ui/main_window.py        # MainWindow(QMainWindow)
-ui/settings_dialog.py    # SettingsDialog(QDialog)
+main.py                  # QApplication 初期化・起動（org=ClipManager / app=Clip Manager）
+core/
+  settings.py            # AppSettings — QSettings ラッパー（ORG/APP 定数を保持）
+  downloader.py          # DownloadWorker(QThread) + build_format_string()。
+                         #   完了時 download_succeeded(dict) を emit（自動登録用）
+  models.py              # Clip / Folder / Tag / LibraryInfo（dataclass）
+  database.py            # LibraryDatabase — 1ライブラリの SQLite 接続・スキーマ・DAO
+  library.py             # Library — ルート＋DB、相対/絶対パス変換、走査取り込み・欠落検知
+  libraries.py           # LibraryManager — 複数ライブラリの登録/切替（QSettings）
+  scan_worker.py         # ScanWorker(QThread) — 走査を別スレッドで実行
+ui/
+  main_window.py         # MainWindow — ダウンロード UI ＋ Library メニュー・自動登録
+  settings_dialog.py     # SettingsDialog
 ```
 
 ### スレッドモデル
 
-- ダウンロードは `DownloadWorker(QThread)` で実行（メインスレッドをブロックしない）
-- yt-dlp の Python API を使用（subprocess ではない）
-- スレッド→UI への通知はすべて Qt Signals 経由（`progress_updated`, `log_message`, `download_finished`）
-- キャンセルは `_cancelled` フラグ → yt-dlp が `DownloadCancelled` を raise
+- 重い処理（ダウンロード・ライブラリ走査）は QThread で実行し、UI へは Qt Signals
+  経由でのみ通知する。スレッドから直接 UI を触らない。
+- **SQLite はスレッドごとに接続を分ける**。主スレッドは `MainWindow._db`、走査は
+  `ScanWorker` が自分の接続を開く。`LibraryDatabase` は WAL モードで併存に対応。
+- `DownloadWorker` / `ScanWorker` は毎回新しいインスタンスを生成する（再利用しない）。
+  アプリ終了時（`closeEvent`）に `wait()` し、`_db` を close する。
 
-### フォーマット文字列
+### ライブラリとデータモデル
 
-`build_format_string(quality)` が yt-dlp の `-f` 相当の文字列を、`build_format_sort(codec)`
-が `format_sort` 相当のリストを生成する。
-コーデックは**必須フィルタにしない**(`format_sort` で「同解像度なら優先」とする)。
-これにより H.264 を選んでいても VP9/AV1 のみで配信される 1440p/2160p を取り逃さない
-=「best」が常に真の最高画質になる。画質は `[height<=N]` で上限だけを絞る。
-
-### 保存形式（save format）
-
-`core/downloader.py` の `SAVE_FORMATS` が保存形式を定義する。
-- 動画コンテナ: `MP4` / `MKV` / `WebM` → `merge_output_format` に渡す。
-- 音声のみ: `MP3` / `M4A` → `format="bestaudio/best"` ＋ `FFmpegExtractAudio` で抽出。
-  画質・コーデックは動画用の設定なので適用されない（UI 側で自動グレーアウト）。
-`is_audio_format(save_format)` で動画/音声を判定する。
+- **ライブラリ＝ルートディレクトリ**。複数登録でき、アクティブを切り替える。
+- メタデータ DB は各ルート直下 `<root>/.clipmanager/library.db`（自己完結）。
+  サムネイルは `<root>/.clipmanager/thumbnails/`。
+- **DB 内のパスはルート相対（POSIX）**で保存し、`Library` が絶対パスへ解決する
+  （ライブラリ移動・持ち出しに強い）。
+- ダウンロード完了ファイルがアクティブライブラリ内なら自動登録する。外なら登録しない。
 
 ## 設定の永続化
 
-`QSettings(org="ClipDownloader", app="Clip Downloader")` を使用。
-Windows では レジストリに保存される。デフォルト値：
-- 保存形式: `MP4`
-- 画質: `720p`
-- コーデック: `H.264`
-- 字幕: `True`（英語 `.srt` を別ファイルで保存）
+- `QSettings(org="ClipManager", app="Clip Manager")` を使用（Windows はレジストリ）。
+- ダウンロード既定値: 保存形式 `MP4` / 画質 `720p` / コーデック `H.264` / 字幕 `True`。
+- ライブラリのレジストリ（登録一覧＋アクティブ）も QSettings に JSON で保持する。
 
-## 字幕の扱い
+## 将来構想
 
-- `embedsubtitles=False` — 動画への埋め込み・焼き付けは行わない
-- `タイトル.en.srt` として動画と同じフォルダに保存される
-- 対象言語: 英語のみ（`subtitleslangs=["en"]`）
-
-## 開発上の注意
-
-- UI コンポーネントの変更後は必ず `.venv\Scripts\python main.py` で動作確認する
-- Qt Signals を使わずにワーカースレッドから直接 UI を操作しないこと（スレッドセーフでない）
-- `DownloadWorker` は毎回新しいインスタンスを生成する（再利用しない）
-- `QThread` の `wait()` はアプリ終了時（`closeEvent`）に必ず呼ぶこと
+- ローカルLLM 分析（plan.md §7）。GUI は **PySide を継続**。モデルは `models/`、
+  llama.cpp ランタイムは `runtime/`（いずれも gitignore）。詳細は `docs/plan/plan.md`。

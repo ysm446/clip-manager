@@ -90,6 +90,11 @@ class DownloadWorker(QThread):
     progress_updated = Signal(float, str)   # (percent 0-100, status line)
     log_message = Signal(str)               # informational log line
     download_finished = Signal(bool, str)   # (success, message)
+    # Emitted on success with the final file path + metadata, so the main thread
+    # can register the clip into the active library DB. Payload keys:
+    #   file_path, source_url, title, duration, width, height, vcodec,
+    #   container, filesize, subtitle_path
+    download_succeeded = Signal(dict)
 
     def __init__(
         self,
@@ -185,6 +190,46 @@ class DownloadWorker(QThread):
             )
 
     # ------------------------------------------------------------------
+    # Success payload (for library auto-registration)
+    # ------------------------------------------------------------------
+
+    def _build_success_payload(self, info: dict) -> dict | None:
+        """Extract the final file path + metadata from yt-dlp's info dict.
+
+        After a successful download, yt-dlp records the final (post-merge /
+        post-extract) path in ``requested_downloads[].filepath``. Returns None
+        if the path could not be determined.
+        """
+        if not isinstance(info, dict):
+            return None
+        downloads = info.get("requested_downloads") or []
+        entry = downloads[0] if downloads else {}
+        file_path = entry.get("filepath") or info.get("filepath")
+        if not file_path:
+            return None
+
+        # Subtitle sidecar: yt-dlp lists written subs in requested_subtitles.
+        subtitle_path = None
+        req_subs = info.get("requested_subtitles") or {}
+        for sub in req_subs.values():
+            if isinstance(sub, dict) and sub.get("filepath"):
+                subtitle_path = sub["filepath"]
+                break
+
+        return {
+            "file_path": file_path,
+            "source_url": info.get("webpage_url") or self.url,
+            "title": info.get("title"),
+            "duration": info.get("duration"),
+            "width": info.get("width"),
+            "height": info.get("height"),
+            "vcodec": info.get("vcodec") if info.get("vcodec") not in (None, "none") else None,
+            "container": info.get("ext"),
+            "filesize": info.get("filesize") or info.get("filesize_approx"),
+            "subtitle_path": subtitle_path,
+        }
+
+    # ------------------------------------------------------------------
     # Thread entry point
     # ------------------------------------------------------------------
 
@@ -241,7 +286,10 @@ class DownloadWorker(QThread):
                 info = ydl.extract_info(self.url, download=False)
                 if not audio_only:
                     self._warn_if_below_requested(info)
-                ydl.process_ie_result(info, download=True)
+                result = ydl.process_ie_result(info, download=True)
+            payload = self._build_success_payload(result or info)
+            if payload:
+                self.download_succeeded.emit(payload)
             self.download_finished.emit(True, "Download complete.")
         except yt_dlp.utils.DownloadCancelled:
             self.download_finished.emit(False, "Download cancelled.")

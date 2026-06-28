@@ -4,8 +4,8 @@ from PySide6.QtCore import QSettings
 
 
 class AppSettings:
-    ORG = "ClipDownloader"
-    APP = "Clip Downloader"
+    ORG = "ClipManager"
+    APP = "Clip Manager"
 
     def __init__(self):
         self._qs = QSettings(self.ORG, self.APP)

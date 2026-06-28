@@ -9,8 +9,8 @@ def main() -> None:
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
-    app.setApplicationName("Clip Downloader")
-    app.setOrganizationName("ClipDownloader")
+    app.setApplicationName("Clip Manager")
+    app.setOrganizationName("ClipManager")
     app.setStyle("Fusion")
 
     window = MainWindow()
