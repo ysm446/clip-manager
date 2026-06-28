@@ -158,10 +158,45 @@ class Library:
         if new_abs.exists():
             raise FileExistsError(f"同名のフォルダが既に存在します: {new_name}")
         old_abs.rename(new_abs)
-
-        old_prefix = old_rel.rstrip("/") + "/"
         new_rel = self.to_rel(new_abs)
-        new_prefix = new_rel + "/"
+        self._reprefix_clips(db, old_rel, new_rel)
+        return new_rel
+
+    def move_dir(self, db: LibraryDatabase, src_rel: str, dest_parent_rel: str) -> str:
+        """実フォルダを別フォルダ配下へ移動し、配下クリップのパスも追従させる。
+
+        ``dest_parent_rel`` は移動先の親フォルダ（"" = ルート）。戻り値は新しい rel。
+        """
+        src_rel = src_rel.strip("/")
+        if not src_rel:
+            raise ValueError("ルートフォルダは移動できません。")
+        src_abs = self.to_abs(src_rel)
+        if not src_abs.is_dir():
+            raise FileNotFoundError("フォルダが見つかりません。")
+        dest_parent = self.root if not dest_parent_rel else self.to_abs(dest_parent_rel)
+        if not self.is_inside(dest_parent):
+            raise ValueError("移動先がライブラリの外です。")
+        dest_parent_rel = "" if not dest_parent_rel else self.to_rel(dest_parent)
+
+        cur_parent = src_rel.rsplit("/", 1)[0] if "/" in src_rel else ""
+        if dest_parent_rel == cur_parent:
+            return src_rel   # 同じ親 → 何もしない
+        # 自身・その子孫の中へは移動できない
+        if dest_parent_rel == src_rel or dest_parent_rel.startswith(src_rel + "/"):
+            raise ValueError("フォルダを自身の中へは移動できません。")
+
+        new_abs = dest_parent / src_rel.split("/")[-1]
+        if new_abs.exists():
+            raise FileExistsError(f"移動先に同名のフォルダが既に存在します: {new_abs.name}")
+        src_abs.rename(new_abs)
+        new_rel = self.to_rel(new_abs)
+        self._reprefix_clips(db, src_rel, new_rel)
+        return new_rel
+
+    def _reprefix_clips(self, db: LibraryDatabase, old_rel: str, new_rel: str) -> None:
+        """フォルダ移動/改名に伴い、配下クリップの rel_path / subtitle_path を更新。"""
+        old_prefix = old_rel.rstrip("/") + "/"
+        new_prefix = new_rel.rstrip("/") + "/"
         for clip in db.list_clips():
             if clip.rel_path.startswith(old_prefix):
                 db.update_clip_path(clip.id, new_prefix + clip.rel_path[len(old_prefix):])
@@ -169,7 +204,6 @@ class Library:
                 db.update_subtitle_path(
                     clip.id, new_prefix + clip.subtitle_path[len(old_prefix):]
                 )
-        return new_rel
 
     def register_download(self, db: LibraryDatabase, payload: dict) -> int | None:
         """ダウンロード完了ペイロードをライブラリへ登録し clip id を返す。

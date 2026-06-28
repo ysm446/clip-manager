@@ -43,8 +43,9 @@ _ROLE_ID = Qt.ItemDataRole.UserRole + 1     # folder=rel(str,""=root) / clip=id(
 class _FolderTree(QTreeWidget):
     """フォルダへのクリップ D&D 移動・Delete キー削除に対応したツリー。"""
 
-    clip_dropped = Signal(int, str)   # (clip_id, dest_folder_rel)
-    delete_requested = Signal(list)   # [clip_id, ...]
+    clip_dropped = Signal(int, str)     # (clip_id, dest_folder_rel)
+    folder_dropped = Signal(str, str)   # (src_folder_rel, dest_parent_rel)
+    delete_requested = Signal(list)     # [clip_id, ...]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -75,19 +76,26 @@ class _FolderTree(QTreeWidget):
             event.ignore()
             return
         dest_rel = target.data(0, _ROLE_ID) or ""
-        # ドロップ前に id を確定（rebuild で item が破棄されても安全なように）
-        ids = [
+        # ドロップ前に確定（rebuild で item が破棄されても安全なように）
+        clip_ids = [
             int(it.data(0, _ROLE_ID))
             for it in self.selectedItems()
             if it.data(0, _ROLE_KIND) == "clip"
         ]
-        if not ids:
+        folder_rels = [
+            it.data(0, _ROLE_ID)
+            for it in self.selectedItems()
+            if it.data(0, _ROLE_KIND) == "folder" and it.data(0, _ROLE_ID)
+        ]
+        if not clip_ids and not folder_rels:
             event.ignore()
             return
         # 既定の move（モデル改変）はせず、自前で移動 → rebuild する
         event.accept()
-        for clip_id in ids:
+        for clip_id in clip_ids:
             self.clip_dropped.emit(clip_id, dest_rel)
+        for rel in folder_rels:
+            self.folder_dropped.emit(rel, dest_rel)
 
 
 class _IconList(QListWidget):
@@ -159,6 +167,7 @@ class FilterPanel(QWidget):
         self._tree.currentItemChanged.connect(self._on_selection_changed)
         self._tree.itemDoubleClicked.connect(self._on_double_clicked)
         self._tree.clip_dropped.connect(self._on_clip_dropped)
+        self._tree.folder_dropped.connect(self._on_folder_dropped)
         self._tree.delete_requested.connect(self._delete_clips)
         self._tree.itemExpanded.connect(self._on_expand_changed)
         self._tree.itemCollapsed.connect(self._on_expand_changed)
@@ -329,7 +338,11 @@ class FilterPanel(QWidget):
         item.setData(0, _ROLE_ID, item_id)
         base = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
         if kind == "folder":
-            item.setFlags(base | Qt.ItemFlag.ItemIsDropEnabled)
+            # ルート("")はドロップ先のみ、サブフォルダはドラッグ移動も可
+            flags = base | Qt.ItemFlag.ItemIsDropEnabled
+            if item_id:
+                flags |= Qt.ItemFlag.ItemIsDragEnabled
+            item.setFlags(flags)
             item.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
         elif kind == "clip":
             item.setFlags(base | Qt.ItemFlag.ItemIsDragEnabled)
@@ -623,6 +636,17 @@ class FilterPanel(QWidget):
             self._library.move_clip(self._db, clip_id, dest_abs)
         except Exception as e:
             QMessageBox.warning(self, "Move failed", str(e))
+            return
+        self.rebuild()
+        self.library_changed.emit()
+
+    def _on_folder_dropped(self, src_rel: str, dest_parent_rel: str) -> None:
+        if self._db is None or self._library is None:
+            return
+        try:
+            self._library.move_dir(self._db, src_rel, dest_parent_rel)
+        except Exception as e:
+            QMessageBox.warning(self, "Move folder failed", str(e))
             return
         self.rebuild()
         self.library_changed.emit()
