@@ -24,7 +24,7 @@ from core.download_queue import DownloadQueue, DownloadRequest
 from core.thumbnails import generate_thumbnail
 from ui.filter_panel import FilterPanel
 from ui.queue_view import QueueView
-from ui.player_widget import PlayerWidget, _fmt_ms
+from ui.player_widget import PlayerWidget, _fmt_ms, _fmt_pos_for_filename
 from ui.clip_details import ClipDetailsPanel
 from ui.download_dialog import DownloadDialog
 from ui.settings_dialog import SettingsDialog
@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self._player.bookmark_add_requested.connect(self._add_bookmark)
         self._player.bookmark_rename_requested.connect(self._rename_bookmark)
         self._player.bookmark_delete_requested.connect(self._delete_bookmark)
+        self._player.screenshot_requested.connect(self._save_screenshot)
         self._filter_panel.clip_activated.connect(self._play_clip_id)
         self._filter_panel.clip_selected.connect(self._show_details)
         self._filter_panel.open_external_requested.connect(self._open_external)
@@ -402,6 +403,47 @@ class MainWindow(QMainWindow):
             self._on_log(f"[Bookmark] thumbnail failed: {e}")
         self._reload_markers()
         self._on_log(f"[Bookmark] added at {_fmt_ms(position_ms)}")
+
+    @Slot(int)
+    def _save_screenshot(self, position_ms: int) -> None:
+        """現在位置のフレームを、動画と同じフォルダにフル解像度で保存する。
+
+        ファイル名は ``<動画名>_<再生位置>.jpg``（同名が既にあれば連番を付与）。
+        """
+        cid = self._playing_clip_id
+        if self._db is None or self._active_lib is None or cid is None:
+            return
+        clip = self._db.get_clip(cid)
+        if clip is None:
+            return
+        media = self._active_lib.to_abs(clip.rel_path)
+        out = self._unique_path(
+            Path(media).with_name(
+                f"{Path(media).stem}_{_fmt_pos_for_filename(position_ms)}.jpg"
+            )
+        )
+        ok = generate_thumbnail(
+            media, out, at_seconds=position_ms / 1000.0, width=0, quality=2,
+        )
+        if ok:
+            self._player.show_status(f"スクリーンショットを保存: {out.name}")
+            self._on_log(f"[Screenshot] saved {out}")
+        else:
+            self._player.show_status(
+                "スクリーンショットの保存に失敗しました（ffmpeg を確認）", error=True
+            )
+            self._on_log("[Screenshot] failed (ffmpeg unavailable or error)")
+
+    @staticmethod
+    def _unique_path(path: Path) -> Path:
+        """``path`` が既存なら ``name_1.jpg`` のように連番で衝突を避ける。"""
+        if not path.exists():
+            return path
+        for i in range(1, 1000):
+            cand = path.with_name(f"{path.stem}_{i}{path.suffix}")
+            if not cand.exists():
+                return cand
+        return path
 
     @Slot(int, str)
     def _rename_bookmark(self, marker_id: int, current: str) -> None:

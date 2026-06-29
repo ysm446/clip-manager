@@ -44,6 +44,17 @@ def _fmt_ms(ms: int) -> str:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
+def _fmt_pos_for_filename(ms: int) -> str:
+    """再生位置をファイル名で安全な文字列にする（例: 1h02m03s, 02m03s）。
+
+    ``:`` は Windows のファイル名で使えないため使わない。
+    """
+    ms = max(0, ms)
+    h, rem = divmod(ms // 1000, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}h{m:02d}m{sec:02d}s" if h else f"{m:02d}m{sec:02d}s"
+
+
 class _ClickSlider(QSlider):
     """溝クリックでジャンプ＋マーカー位置にティックを描画する水平スライダー。"""
 
@@ -170,6 +181,7 @@ class PlayerWidget(QWidget):
     bookmark_add_requested = Signal(int)            # position_ms
     bookmark_rename_requested = Signal(int, str)    # (marker_id, current_title)
     bookmark_delete_requested = Signal(int)         # marker_id
+    screenshot_requested = Signal(int)              # position_ms
 
     _SPEEDS = ["0.5×", "0.75×", "1.0×", "1.25×", "1.5×", "2.0×"]
 
@@ -302,6 +314,9 @@ class PlayerWidget(QWidget):
         # B キーで現在位置にブックマーク
         self._bm_shortcut = QShortcut(QKeySequence(Qt.Key.Key_B), self)
         self._bm_shortcut.activated.connect(self._request_add_bookmark)
+        # F12 で現在位置のスクリーンショットを動画と同じフォルダへ保存
+        self._shot_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F12), self)
+        self._shot_shortcut.activated.connect(self._request_screenshot)
         self._update_bookmark_enabled()
 
         # 開閉状態を復元
@@ -398,6 +413,16 @@ class PlayerWidget(QWidget):
     def _request_add_bookmark(self) -> None:
         if self._clip_id is not None:
             self.bookmark_add_requested.emit(int(self._player.position()))
+
+    def _request_screenshot(self) -> None:
+        if self._current_media:
+            self.screenshot_requested.emit(int(self._player.position()))
+
+    def show_status(self, message: str, error: bool = False) -> None:
+        """ステータス行に短いメッセージを表示する（成功は緑、失敗は赤）。"""
+        color = "#c0392b" if error else "#27ae60"
+        self._status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._status.setText(message)
 
     def _on_bookmark_activated(self, item: QListWidgetItem) -> None:
         self._player.setPosition(int(item.data(Qt.ItemDataRole.UserRole + 1)))

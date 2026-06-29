@@ -33,11 +33,13 @@ def generate_thumbnail(
     ffmpeg: str | None = None,
     width: int = THUMB_WIDTH,
     at_seconds: float | None = None,
+    quality: int = 3,
 ) -> bool:
     """``src`` のサムネイルを ``out_path`` (JPEG) に生成する。成功で True。
 
     ``at_seconds`` を指定するとその時刻のフレームを使う（ブックマーク/チャプター用）。
-    未指定なら長さから自動決定する。
+    未指定なら長さから自動決定する。``width`` が 0 以下なら縮小せず元解像度で出力する
+    （スクリーンショット用）。``quality`` は JPEG 品質（1=最高〜31、小さいほど高品質）。
     """
     exe = ffmpeg or ffmpeg_path()
     if not exe:
@@ -50,10 +52,11 @@ def generate_thumbnail(
 
     ss = at_seconds if at_seconds is not None else _seek_seconds(duration)
     ss = max(0.0, ss)
+    scale = ["-vf", f"scale={width}:-1"] if width and width > 0 else []
     cmd = [
         exe, "-y", "-ss", f"{ss:.2f}", "-i", str(src),
-        "-frames:v", "1", "-vf", f"scale={width}:-1",
-        "-q:v", "3", str(out_path),
+        "-frames:v", "1", *scale,
+        "-q:v", str(quality), str(out_path),
     ]
     try:
         res = subprocess.run(
