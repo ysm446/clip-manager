@@ -27,7 +27,7 @@ from ui.queue_view import QueueView
 from ui.player_widget import PlayerWidget, _fmt_ms, _fmt_pos_for_filename
 from ui.clip_details import ClipDetailsPanel
 from ui.download_dialog import DownloadDialog
-from ui.settings_dialog import SettingsDialog
+from ui.settings_panel import SettingsPanel
 
 
 class MainWindow(QMainWindow):
@@ -108,6 +108,10 @@ class MainWindow(QMainWindow):
         qlayout.addWidget(self._log)
         self._tabs.addTab(queue_tab, "Queue")
 
+        # --- Settings tab ---
+        self._settings_panel = SettingsPanel(self._settings)
+        self._tabs.addTab(self._settings_panel, "Settings")
+
         # --- Menu bar ---
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction("Settings...").triggered.connect(self._open_settings)
@@ -185,7 +189,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _open_settings(self) -> None:
-        SettingsDialog(self._settings, self).exec()
+        self._tabs.setCurrentWidget(self._settings_panel)
 
     @Slot(str)
     def _on_log(self, message: str) -> None:
@@ -349,7 +353,8 @@ class MainWindow(QMainWindow):
         self._persist_resume_position()
         self._playing_clip_id = clip_id
         self._player.set_clip(clip_id, self._active_lib)
-        self._player.play(media, subtitle, resume_ms=clip.resume_position_ms or 0)
+        resume_ms = (clip.resume_position_ms or 0) if self._settings.save_resume_position else 0
+        self._player.play(media, subtitle, resume_ms=resume_ms)
         self._player.set_markers(self._db.list_markers(clip_id))
         self._show_details(clip_id)
 
@@ -360,6 +365,8 @@ class MainWindow(QMainWindow):
         うれしくないので消去（先頭から）する。
         """
         if self._db is None or self._playing_clip_id is None:
+            return
+        if not self._settings.save_resume_position:
             return
         pos = self._player.position_ms()
         dur = self._player.duration_ms()

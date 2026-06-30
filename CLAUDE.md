@@ -54,7 +54,7 @@ ui/
   download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
   queue_view.py          # QueueView — ダウンロードキューの進捗一覧
   library_view.py        # （現在は未使用。fmt_* ヘルパ＋将来のサムネイル一覧用に残置）
-  settings_dialog.py     # SettingsDialog
+  settings_panel.py      # SettingsPanel — Settings タブ（再生/ダウンロード設定・即時反映）
 ```
 
 Library タブのレイアウトは `QSplitter[ FilterPanel | QSplitter(PlayerWidget / ClipDetailsPanel) ]`

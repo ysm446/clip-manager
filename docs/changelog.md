@@ -2,6 +2,16 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-07-01（設定タブ＋再生位置保存のオプション化）
+
+- `ui/settings_panel.py`: **Settings タブ**を新設（変更は即時に QSettings へ反映）。
+  「再生」グループに **「動画の再生位置を保存する」チェックボックス**、「ダウンロード」
+  グループに従来の保存先/形式/画質/コーデック/字幕を集約。
+- `core/settings.py`: `save_resume_position`（既定 True）を追加。
+- `ui/main_window.py`: メニュー「Settings...」は Settings タブへ切替に変更。再生位置の
+  保存/復元はこの設定が ON のときだけ行う。
+- 設定をタブに集約したため、未使用の `ui/settings_dialog.py` を削除。
+
 ## 2026-07-01（前回の再生位置を保存・レジューム）
 
 - DB スキーマ v3: `clips.resume_position_ms` を追加（v2→v3 マイグレーション付き）。

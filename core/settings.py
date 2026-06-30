@@ -61,6 +61,17 @@ class AppSettings:
     def write_subtitles(self, v: bool) -> None:
         self._qs.setValue("download/write_subtitles", v)
 
+    # --- Playback ---
+
+    @property
+    def save_resume_position(self) -> bool:
+        """動画の再生位置を保存して次回その位置から再開するか。"""
+        return self._qs.value("playback/save_resume_position", True, type=bool)
+
+    @save_resume_position.setter
+    def save_resume_position(self, v: bool) -> None:
+        self._qs.setValue("playback/save_resume_position", bool(v))
+
     # --- Window geometry ---
 
     def save_geometry(self, geometry: bytes, state: bytes) -> None:
