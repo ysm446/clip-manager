@@ -37,6 +37,8 @@ class DownloadRequest:
     status: str = QUEUED
     progress: float = 0.0
     message: str = ""
+    overwrite: bool = False          # 既存ファイルを上書きする（--force-overwrites）
+    output_stem: str | None = None   # 出力名（拡張子なし）を固定。再DL時に同名へ上書き
 
     def is_finished(self) -> bool:
         return self.status in _FINISHED_STATES
@@ -90,6 +92,21 @@ class DownloadQueue(QObject):
             req.status = CANCELLED
             self.request_updated.emit(req)
 
+    def retry(self, request_id: int) -> None:
+        """失敗/キャンセルしたリクエストを再度キューに戻して処理する。
+
+        一覧内の位置は変えず、状態を QUEUED に戻して再実行する。完了済み(DONE)は
+        対象外（同じファイルの再ダウンロードを誤って始めない）。
+        """
+        req = self._find(request_id)
+        if req is None or req.status not in (FAILED, CANCELLED):
+            return
+        req.status = QUEUED
+        req.progress = 0.0
+        req.message = ""
+        self.request_updated.emit(req)
+        self._pump()
+
     def remove(self, request_id: int) -> None:
         """完了済みリクエストを一覧から取り除く（実行中は不可）。"""
         req = self._find(request_id)
@@ -131,6 +148,8 @@ class DownloadQueue(QObject):
             codec=nxt.codec,
             write_subtitles=nxt.write_subtitles,
             save_format=nxt.save_format,
+            overwrite=nxt.overwrite,
+            output_stem=nxt.output_stem,
         )
         self._worker = worker
         worker.progress_updated.connect(

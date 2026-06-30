@@ -60,9 +60,13 @@ class QueueView(QWidget):
         bar = QHBoxLayout()
         self._cancel_btn = QPushButton("Cancel selected")
         self._cancel_btn.clicked.connect(self._cancel_selected)
+        self._retry_btn = QPushButton("Retry selected")
+        self._retry_btn.setToolTip("失敗/キャンセルしたダウンロードを再開する")
+        self._retry_btn.clicked.connect(self._retry_selected)
         self._clear_btn = QPushButton("Clear finished")
         self._clear_btn.clicked.connect(self._clear_finished)
         bar.addWidget(self._cancel_btn)
+        bar.addWidget(self._retry_btn)
         bar.addWidget(self._clear_btn)
         bar.addStretch()
         self._status_label = QLabel("")
@@ -158,6 +162,13 @@ class QueueView(QWidget):
         rid = self._selected_id()
         if rid is not None:
             self._queue.cancel(rid)
+
+    def _retry_selected(self) -> None:
+        if self._queue is None:
+            return
+        rid = self._selected_id()
+        if rid is not None:
+            self._queue.retry(rid)
 
     def _clear_finished(self) -> None:
         if self._queue is None:
