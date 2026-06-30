@@ -72,6 +72,7 @@ class MainWindow(QMainWindow):
         self._filter_panel.clip_selected.connect(self._show_details)
         self._filter_panel.open_external_requested.connect(self._open_external)
         self._filter_panel.open_location_requested.connect(self._open_location)
+        self._filter_panel.redownload_requested.connect(self._redownload_clip)
         self._filter_panel.open_folder_requested.connect(self._open_folder)
         self._filter_panel.download_here_requested.connect(self._open_download_dialog)
         self._filter_panel.library_changed.connect(self._update_library_status)
@@ -157,6 +158,53 @@ class MainWindow(QMainWindow):
         )
         self._queue.add(req)
         self._on_log(f"[Queue] Added: {req.url}  →  {req.dest_dir}")
+        self._tabs.setCurrentWidget(self._tabs.widget(1))  # Queue タブへ
+
+    # container（拡張子）→ 保存形式。再DL時に元と同じ形式を既定にする。
+    _CONTAINER_TO_FORMAT = {
+        "mp4": "MP4", "mkv": "MKV", "webm": "WebM", "mp3": "MP3", "m4a": "M4A",
+    }
+
+    @Slot(int)
+    def _redownload_clip(self, clip_id: int) -> None:
+        """既存クリップを元 URL から再取得し、同じファイルへ上書きする。"""
+        if self._db is None or self._active_lib is None:
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            return
+        if not clip.source_url:
+            QMessageBox.information(
+                self, "Re-download",
+                "このクリップにはダウンロード元 URL が記録されていないため再取得できません。",
+            )
+            return
+        abs_path = Path(self._active_lib.to_abs(clip.rel_path))
+        dest_dir = str(abs_path.parent)
+        stem = abs_path.stem
+        ext = abs_path.suffix.lstrip(".").lower()
+        fmt = self._CONTAINER_TO_FORMAT.get(ext) or self._settings.save_format
+        dlg = DownloadDialog(
+            self._settings, dest_dir, self,
+            initial_url=clip.source_url,
+            initial_format=fmt,
+            note=f"⚠ 既存ファイルを上書きします: {abs_path.name}",
+            window_title="Re-download (overwrite)",
+        )
+        if not dlg.exec():
+            return
+        v = dlg.values()
+        # 同形式のままなら同名へ上書き。形式を変えた場合は別拡張子で新規保存になる。
+        same_format = v["save_format"] == fmt
+        req = DownloadRequest(
+            url=v["url"], dest_dir=v["dest_dir"], quality=v["quality"],
+            codec=v["codec"], write_subtitles=v["write_subtitles"],
+            save_format=v["save_format"],
+            overwrite=True,
+            output_stem=stem if same_format else None,
+        )
+        self._queue.add(req)
+        self._on_log(f"[Queue] Re-download (overwrite): {req.url}  →  {dest_dir}")
         self._tabs.setCurrentWidget(self._tabs.widget(1))  # Queue タブへ
 
     @Slot()

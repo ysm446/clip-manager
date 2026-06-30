@@ -123,6 +123,7 @@ class FilterPanel(QWidget):
     open_folder_requested = Signal(str)      # フォルダ（絶対パス）
     open_external_requested = Signal(str)    # クリップ（絶対パス）
     open_location_requested = Signal(str)    # クリップ（絶対パス）
+    redownload_requested = Signal(int)       # クリップ（再ダウンロードして上書き）
     library_changed = Signal()               # 構成が変わった
 
     _EXPANDED_KEY = "ui/expanded_folders"
@@ -717,6 +718,12 @@ class FilterPanel(QWidget):
         menu.addAction("Open file location").triggered.connect(
             lambda: self.open_location_requested.emit(self._abs(cid))
         )
+        # 再ダウンロード（上書き）— ダウンロード元 URL が記録されているときだけ
+        clip = self._db.get_clip(cid) if self._db else None
+        if clip is not None and clip.source_url:
+            menu.addAction("Re-download (overwrite)...").triggered.connect(
+                lambda: self.redownload_requested.emit(cid)
+            )
         menu.addSeparator()
         tags = self._db.list_tags() if self._db else []
         tag_menu = menu.addMenu("Tags")

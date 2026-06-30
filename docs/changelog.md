@@ -2,6 +2,23 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-07-01（クリップの再ダウンロード・上書き）
+
+- `core/downloader.py` / `core/download_queue.py`: ダウンロードに `overwrite`
+  （`--force-overwrites` 相当）と `output_stem`（出力名を固定）を追加。yt-dlp は既定で
+  既存ファイルをスキップするため、上書きには明示指定が必要。
+- `ui/filter_panel.py`: クリップ右クリックに **「Re-download (overwrite)...」**（元 URL が
+  記録されているクリップのみ）。
+- `ui/download_dialog.py`: URL/形式の事前入力・注意書き・タイトル指定に対応。
+- `ui/main_window.py`: 既存ファイルと同じフォルダ・同じ名前へ上書き再取得。形式を
+  変えた場合のみ別拡張子で新規保存になる（その旨ダイアログで明示）。
+
+## 2026-07-01（失敗したダウンロードの再開）
+
+- `core/download_queue.py`: `retry(request_id)` を追加。失敗/キャンセルした
+  リクエストを一覧内の位置を変えずに QUEUED へ戻して再実行する（DONE は対象外）。
+- `ui/queue_view.py`: Queue タブに **「Retry selected」ボタン**を追加。
+
 ## 2026-07-01（設定タブ＋再生位置保存のオプション化）
 
 - `ui/settings_panel.py`: **Settings タブ**を新設（変更は即時に QSettings へ反映）。

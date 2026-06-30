@@ -104,6 +104,8 @@ class DownloadWorker(QThread):
         codec: str,
         write_subtitles: bool,
         save_format: str = "MP4",
+        overwrite: bool = False,
+        output_stem: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -113,6 +115,8 @@ class DownloadWorker(QThread):
         self.codec = codec
         self.write_subtitles = write_subtitles
         self.save_format = save_format
+        self.overwrite = overwrite
+        self.output_stem = output_stem
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -237,8 +241,16 @@ class DownloadWorker(QThread):
         spec = SAVE_FORMATS.get(self.save_format, SAVE_FORMATS["MP4"])
         audio_only = spec["kind"] == "audio"
 
+        if self.output_stem:
+            # 出力名を固定（再DLで同名へ上書き）。リテラルの % は %% にエスケープ。
+            safe_stem = self.output_stem.replace("%", "%%")
+            outtmpl = f"{self.output_dir}/{safe_stem}.%(ext)s"
+        else:
+            outtmpl = f"{self.output_dir}/%(title)s.%(ext)s"
+
         ydl_opts: dict = {
-            "outtmpl": f"{self.output_dir}/%(title)s.%(ext)s",
+            "outtmpl": outtmpl,
+            "overwrites": self.overwrite,
             "progress_hooks": [self._progress_hook],
             "postprocessor_hooks": [self._postprocessor_hook],
             # Subtitle options

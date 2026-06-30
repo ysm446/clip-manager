@@ -24,17 +24,36 @@ _CODECS = ["H.264", "VP9", "AV1"]
 
 
 class DownloadDialog(QDialog):
-    def __init__(self, settings: AppSettings, dest_dir: str, parent=None):
+    def __init__(
+        self,
+        settings: AppSettings,
+        dest_dir: str,
+        parent=None,
+        *,
+        initial_url: str = "",
+        initial_format: str | None = None,
+        note: str = "",
+        window_title: str = "Download here",
+    ):
         super().__init__(parent)
         self._settings = settings
         self._dest_dir = dest_dir
-        self.setWindowTitle("Download here")
+        self._initial_url = initial_url
+        self._initial_format = initial_format
+        self._note = note
+        self.setWindowTitle(window_title)
         self.setMinimumWidth(520)
         self._init_ui()
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
+
+        if self._note:
+            note = QLabel(self._note)
+            note.setStyleSheet("color: #c0392b; font-size: 11px;")
+            note.setWordWrap(True)
+            layout.addWidget(note)
 
         dest = QLabel(self._dest_dir)
         dest.setStyleSheet("color: gray; font-size: 11px;")
@@ -47,11 +66,12 @@ class DownloadDialog(QDialog):
 
         self._url_edit = QLineEdit()
         self._url_edit.setPlaceholderText("Paste YouTube URL here...")
+        self._url_edit.setText(self._initial_url)
         form.addRow("URL:", self._url_edit)
 
         self._format_combo = QComboBox()
         self._format_combo.addItems(list(SAVE_FORMATS))
-        self._format_combo.setCurrentText(self._settings.save_format)
+        self._format_combo.setCurrentText(self._initial_format or self._settings.save_format)
         self._format_combo.currentTextChanged.connect(self._on_format_changed)
         form.addRow("Format:", self._format_combo)
 
