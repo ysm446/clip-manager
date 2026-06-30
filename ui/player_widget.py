@@ -194,6 +194,7 @@ class PlayerWidget(QWidget):
         self._clip_id = None
         self._library = None
         self._markers = []
+        self._pending_resume_ms = 0
         self._settings = QSettings()
         self._subtitles_on = self._settings.value("ui/subtitles_on", True, type=bool)
         self._init_ui()
@@ -333,6 +334,7 @@ class PlayerWidget(QWidget):
         self._player.positionChanged.connect(self._on_position)
         self._player.durationChanged.connect(self._on_duration)
         self._player.playbackStateChanged.connect(self._on_state)
+        self._player.mediaStatusChanged.connect(self._on_media_status)
         self._player.errorOccurred.connect(self._on_error)
         self._video.clicked.connect(self._on_video_clicked)
 
@@ -340,13 +342,15 @@ class PlayerWidget(QWidget):
     # 公開 API
     # ------------------------------------------------------------------
 
-    def play(self, media_abs: str, subtitle_abs: str = "") -> None:
+    def play(self, media_abs: str, subtitle_abs: str = "", resume_ms: int = 0) -> None:
         self._status.clear()
         self._cues = parse_srt(subtitle_abs) if subtitle_abs else []
         self._current_media = media_abs
         self._title.setText(Path(media_abs).name)
         self._video.set_subtitle("")
         self._sub_btn.setEnabled(bool(self._cues))   # 字幕があるときだけ有効
+        # メディアのロード完了後（_on_media_status）にこの位置へシークする
+        self._pending_resume_ms = max(0, int(resume_ms))
         self._player.setSource(QUrl.fromLocalFile(media_abs))
         self._player.setPlaybackRate(self._current_speed())
         self._player.play()
@@ -354,6 +358,14 @@ class PlayerWidget(QWidget):
     def stop(self) -> None:
         self._player.stop()
         self._video.set_subtitle("")
+
+    def position_ms(self) -> int:
+        """現在の再生位置（ミリ秒）。"""
+        return int(self._player.position())
+
+    def duration_ms(self) -> int:
+        """メディアの長さ（ミリ秒、未取得なら 0）。"""
+        return int(self._player.duration())
 
     # ------------------------------------------------------------------
     # ブックマーク
@@ -472,6 +484,16 @@ class PlayerWidget(QWidget):
     def _on_state(self, state) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         self._play_btn.setText("Pause" if playing else "Play")
+
+    def _on_media_status(self, status) -> None:
+        # メディアがロードされたら保留中のレジューム位置へシークする。
+        loaded = status in (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+        )
+        if loaded and self._pending_resume_ms > 0:
+            self._player.setPosition(self._pending_resume_ms)
+            self._pending_resume_ms = 0
 
     def _on_subtitles_toggled(self, checked: bool) -> None:
         self._subtitles_on = checked

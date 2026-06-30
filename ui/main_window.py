@@ -197,6 +197,9 @@ class MainWindow(QMainWindow):
 
     def _load_active_library(self) -> None:
         """Open the active library's DB on the main thread (if any)."""
+        # ライブラリを閉じる前に再生中クリップの位置を保存する
+        self._persist_resume_position()
+        self._player.stop()
         if self._db is not None:
             self._db.close()
             self._db = None
@@ -342,11 +345,29 @@ class MainWindow(QMainWindow):
             subtitle = str(self._active_lib.to_abs(clip.subtitle_path))
         else:
             subtitle = self._find_sidecar_srt(Path(media))   # 隣の .srt を自動検出
+        # 直前まで再生していたクリップの位置を保存してから切り替える
+        self._persist_resume_position()
         self._playing_clip_id = clip_id
         self._player.set_clip(clip_id, self._active_lib)
-        self._player.play(media, subtitle)
+        self._player.play(media, subtitle, resume_ms=clip.resume_position_ms or 0)
         self._player.set_markers(self._db.list_markers(clip_id))
         self._show_details(clip_id)
+
+    def _persist_resume_position(self) -> None:
+        """再生中クリップの現在位置を前回位置として DB に保存する。
+
+        ほぼ最後まで観た／ほとんど再生していない場合はレジュームしても
+        うれしくないので消去（先頭から）する。
+        """
+        if self._db is None or self._playing_clip_id is None:
+            return
+        pos = self._player.position_ms()
+        dur = self._player.duration_ms()
+        if pos < 5000 or (dur > 0 and pos >= dur - 5000):
+            value = None
+        else:
+            value = pos
+        self._db.update_resume_position(self._playing_clip_id, value)
 
     @staticmethod
     def _find_sidecar_srt(media_path: Path) -> str:
@@ -519,6 +540,7 @@ class MainWindow(QMainWindow):
         )
         self._settings.save_splitter("library", bytes(self._library_split.saveState()))
         self._settings.save_splitter("right", bytes(self._right_split.saveState()))
+        self._persist_resume_position()
         self._player.stop()
         self._queue.shutdown(3000)
         if self._scan_worker and self._scan_worker.isRunning():

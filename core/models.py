@@ -31,6 +31,7 @@ class Clip:
     last_played_at: str | None = None   # ISO8601
     play_count: int = 0
     missing: bool = False               # True = 実ファイルが見つからない
+    resume_position_ms: int | None = None  # 前回の再生位置（レジューム用）
     tags: list["Tag"] = field(default_factory=list)  # 付随情報（DB列ではない）
 
 

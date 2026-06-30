@@ -15,7 +15,7 @@ from pathlib import Path
 
 from core.models import Clip, Folder, Tag, Marker
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """
 CREATE TABLE clips (
@@ -36,7 +36,8 @@ CREATE TABLE clips (
     downloaded_at  TEXT,
     last_played_at TEXT,
     play_count     INTEGER NOT NULL DEFAULT 0,
-    missing        INTEGER NOT NULL DEFAULT 0
+    missing        INTEGER NOT NULL DEFAULT 0,
+    resume_position_ms INTEGER
 );
 
 CREATE TABLE folders (
@@ -139,6 +140,11 @@ class LibraryDatabase:
             self._conn.executescript(_MARKERS_SQL)       # v1 → v2: markers 追加
             self._conn.execute("INSERT INTO schema_version(version) VALUES (2)")
             self._conn.commit()
+        if self.version < 3:
+            # v2 → v3: 前回の再生位置（レジューム用）
+            self._conn.execute("ALTER TABLE clips ADD COLUMN resume_position_ms INTEGER")
+            self._conn.execute("INSERT INTO schema_version(version) VALUES (3)")
+            self._conn.commit()
 
     @property
     def version(self) -> int:
@@ -170,6 +176,7 @@ class LibraryDatabase:
             last_played_at=row["last_played_at"],
             play_count=row["play_count"],
             missing=bool(row["missing"]),
+            resume_position_ms=row["resume_position_ms"],
         )
 
     @staticmethod
@@ -309,6 +316,14 @@ class LibraryDatabase:
         self._conn.execute(
             "UPDATE clips SET play_count = play_count + 1, last_played_at = ? WHERE id = ?",
             (_now(), clip_id),
+        )
+        self._conn.commit()
+
+    def update_resume_position(self, clip_id: int, position_ms: int | None) -> None:
+        """前回の再生位置を保存する（None で消去＝先頭から）。"""
+        self._conn.execute(
+            "UPDATE clips SET resume_position_ms = ? WHERE id = ?",
+            (position_ms, clip_id),
         )
         self._conn.commit()
 

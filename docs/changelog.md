@@ -2,6 +2,18 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-07-01（前回の再生位置を保存・レジューム）
+
+- DB スキーマ v3: `clips.resume_position_ms` を追加（v2→v3 マイグレーション付き）。
+  `core/database.py` に `update_resume_position()`、`core/models.py` の `Clip` に
+  `resume_position_ms` を追加。スキャン用の `_CLIP_COLUMNS` には含めないので
+  再走査で潰れない。
+- `ui/player_widget.py`: `play(..., resume_ms=)` でロード完了後（`mediaStatusChanged`）に
+  その位置へシーク。現在位置を返す `position_ms()` / `duration_ms()` を追加。
+- `ui/main_window.py`: クリップ切替・ライブラリ切替・アプリ終了時に再生中クリップの
+  位置を保存し、再生時に前回位置から再開。ほぼ最後まで観た／ほとんど再生して
+  いない場合（前後 5 秒以内）は先頭に戻す。
+
 ## 2026-06-29（字幕が表示されない不具合を修正）
 
 - 原因: `QVideoWidget` に子ウィジェットで字幕を重ねると、実動画のネイティブ描画面に
