@@ -349,11 +349,14 @@ class PlayerWidget(QWidget):
         self._title.setText(Path(media_abs).name)
         self._video.set_subtitle("")
         self._sub_btn.setEnabled(bool(self._cues))   # 字幕があるときだけ有効
-        # メディアのロード完了後（_on_media_status）にこの位置へシークする
+        # レジューム位置があるときは、ロード完了後にシークしてから再生する
+        # （先に play() すると位置0からの再生開始とシークが競合し、一瞬だけ
+        #   復元位置を表示した後に先頭へ戻ってしまう）。
         self._pending_resume_ms = max(0, int(resume_ms))
         self._player.setSource(QUrl.fromLocalFile(media_abs))
         self._player.setPlaybackRate(self._current_speed())
-        self._player.play()
+        if not self._pending_resume_ms:
+            self._player.play()
 
     def stop(self) -> None:
         self._player.stop()
@@ -494,6 +497,7 @@ class PlayerWidget(QWidget):
         if loaded and self._pending_resume_ms > 0:
             self._player.setPosition(self._pending_resume_ms)
             self._pending_resume_ms = 0
+            self._player.play()   # シーク確定後に再生開始
 
     def _on_subtitles_toggled(self, checked: bool) -> None:
         self._subtitles_on = checked
