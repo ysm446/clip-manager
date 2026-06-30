@@ -2,6 +2,13 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-07-01（レジューム再生が効かない不具合を修正）
+
+- 原因: ロード完了（停止状態）での `setPosition` は Media Foundation で無視されがちで、
+  シークが効かず先頭から再生されていた。
+- 修正: `ui/player_widget.py` で先に再生を開始し、再生が実際に走り出した最初の
+  `positionChanged`（PlayingState）で一度だけシークするようにした。
+
 ## 2026-07-01（クリップの再ダウンロード・上書き）
 
 - `core/downloader.py` / `core/download_queue.py`: ダウンロードに `overwrite`

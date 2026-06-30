@@ -334,7 +334,6 @@ class PlayerWidget(QWidget):
         self._player.positionChanged.connect(self._on_position)
         self._player.durationChanged.connect(self._on_duration)
         self._player.playbackStateChanged.connect(self._on_state)
-        self._player.mediaStatusChanged.connect(self._on_media_status)
         self._player.errorOccurred.connect(self._on_error)
         self._video.clicked.connect(self._on_video_clicked)
 
@@ -349,14 +348,13 @@ class PlayerWidget(QWidget):
         self._title.setText(Path(media_abs).name)
         self._video.set_subtitle("")
         self._sub_btn.setEnabled(bool(self._cues))   # 字幕があるときだけ有効
-        # レジューム位置があるときは、ロード完了後にシークしてから再生する
-        # （先に play() すると位置0からの再生開始とシークが競合し、一瞬だけ
-        #   復元位置を表示した後に先頭へ戻ってしまう）。
+        # レジューム位置があれば再生開始後に一度だけシークする（_on_position）。
+        # 停止中やロード直後の setPosition は Media Foundation で無視されがちなので、
+        # 再生が実際に走り出してからシークして確実に効かせる。
         self._pending_resume_ms = max(0, int(resume_ms))
         self._player.setSource(QUrl.fromLocalFile(media_abs))
         self._player.setPlaybackRate(self._current_speed())
-        if not self._pending_resume_ms:
-            self._player.play()
+        self._player.play()
 
     def stop(self) -> None:
         self._player.stop()
@@ -488,17 +486,6 @@ class PlayerWidget(QWidget):
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         self._play_btn.setText("Pause" if playing else "Play")
 
-    def _on_media_status(self, status) -> None:
-        # メディアがロードされたら保留中のレジューム位置へシークする。
-        loaded = status in (
-            QMediaPlayer.MediaStatus.LoadedMedia,
-            QMediaPlayer.MediaStatus.BufferedMedia,
-        )
-        if loaded and self._pending_resume_ms > 0:
-            self._player.setPosition(self._pending_resume_ms)
-            self._pending_resume_ms = 0
-            self._player.play()   # シーク確定後に再生開始
-
     def _on_subtitles_toggled(self, checked: bool) -> None:
         self._subtitles_on = checked
         self._settings.setValue("ui/subtitles_on", checked)
@@ -508,6 +495,15 @@ class PlayerWidget(QWidget):
             self._on_position(self._player.position())   # 現在位置の字幕を即反映
 
     def _on_position(self, pos: int) -> None:
+        # 再生が実際に始まった最初の通知で、保留中のレジューム位置へ一度だけシーク。
+        if (
+            self._pending_resume_ms > 0
+            and self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        ):
+            target = self._pending_resume_ms
+            self._pending_resume_ms = 0
+            self._player.setPosition(target)
+            return   # シーク後の positionChanged で UI を更新する
         if not self._seek.isSliderDown():
             self._seek.setValue(pos)
         self._pos_label.setText(_fmt_ms(pos))
