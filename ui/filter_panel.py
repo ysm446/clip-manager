@@ -128,8 +128,9 @@ class FilterPanel(QWidget):
     library_changed = Signal()               # 構成が変わった
 
     _EXPANDED_KEY = "ui/expanded_folders"
-    _MODE_KEY = "ui/explorer_mode"           # "tree" | "icons"
-    _TREE, _ICONS = 0, 1
+    _MODE_KEY = "ui/explorer_mode"           # "tree" | "icons" | "list"
+    _TREE, _ICONS, _LIST = 0, 1, 2
+    _MODE_NAMES = {_ICONS: "icons", _LIST: "list"}   # 既定は tree
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -148,7 +149,7 @@ class FilterPanel(QWidget):
         bar = QHBoxLayout()
         bar.addWidget(QLabel("View:"))
         self._view_combo = QComboBox()
-        self._view_combo.addItems(["Tree", "Icons"])
+        self._view_combo.addItems(["Tree", "Icons", "List"])
         self._view_combo.currentIndexChanged.connect(self._on_view_mode_changed)
         bar.addWidget(self._view_combo)
         self._up_btn = QPushButton("↑ Up")
@@ -184,11 +185,28 @@ class FilterPanel(QWidget):
         self._icons.setWordWrap(True)
         self._icons.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._icons.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._icons.customContextMenuRequested.connect(self._on_icon_context_menu)
+        self._icons.customContextMenuRequested.connect(self._on_flat_context_menu)
         self._icons.itemDoubleClicked.connect(self._on_icon_double_clicked)
         self._icons.currentItemChanged.connect(self._on_icon_selection)
         self._icons.delete_requested.connect(self._delete_clips)
         self._stack.addWidget(self._icons)
+
+        # List: サムネイル＋項目名を横並びの行で表示（Icons と同じフォルダ移動）
+        self._list = _IconList()
+        self._list.setViewMode(QListWidget.ViewMode.ListMode)
+        self._list.setIconSize(QSize(96, 54))
+        self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._list.setMovement(QListWidget.Movement.Static)
+        self._list.setWordWrap(False)
+        self._list.setSpacing(2)
+        self._list.setUniformItemSizes(False)
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_flat_context_menu)
+        self._list.itemDoubleClicked.connect(self._on_icon_double_clicked)
+        self._list.currentItemChanged.connect(self._on_icon_selection)
+        self._list.delete_requested.connect(self._delete_clips)
+        self._stack.addWidget(self._list)
 
         layout.addWidget(self._stack, stretch=1)
 
@@ -209,8 +227,9 @@ class FilterPanel(QWidget):
 
         # 保存済みの表示モードを復元
         mode = self._settings.value(self._MODE_KEY, "tree", type=str)
-        self._view_combo.setCurrentIndex(self._ICONS if mode == "icons" else self._TREE)
-        self._stack.setCurrentIndex(self._view_combo.currentIndex())
+        index = {"icons": self._ICONS, "list": self._LIST}.get(mode, self._TREE)
+        self._view_combo.setCurrentIndex(index)
+        self._stack.setCurrentIndex(index)
         self._update_toolbar()
 
     # ------------------------------------------------------------------
@@ -383,16 +402,18 @@ class FilterPanel(QWidget):
 
     def _on_view_mode_changed(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
-        self._settings.setValue(
-            self._MODE_KEY, "icons" if index == self._ICONS else "tree"
-        )
+        self._settings.setValue(self._MODE_KEY, self._MODE_NAMES.get(index, "tree"))
         self._update_toolbar()
 
+    def _is_flat_mode(self) -> bool:
+        """フォルダを 1 階層ずつ辿る表示（Icons / List）か。"""
+        return self._stack.currentIndex() in (self._ICONS, self._LIST)
+
     def _update_toolbar(self) -> None:
-        icon_mode = self._stack.currentIndex() == self._ICONS
-        self._up_btn.setVisible(icon_mode)
-        self._path_label.setVisible(icon_mode)
-        if icon_mode:
+        flat = self._is_flat_mode()
+        self._up_btn.setVisible(flat)
+        self._path_label.setVisible(flat)
+        if flat:
             self._up_btn.setEnabled(bool(self._cur_dir))
             if self._library is not None:
                 self._path_label.setText(self._cur_dir or f"{self._library.name}  (root)")
@@ -412,18 +433,24 @@ class FilterPanel(QWidget):
                     return QIcon(pix)
         return self._file_icon()
 
-    def _add_icon_item(self, text, kind, item_id, icon) -> QListWidgetItem:
+    def _add_flat_item(self, target, text, kind, item_id, icon, center) -> QListWidgetItem:
         it = QListWidgetItem(icon, text)
         it.setData(_IROLE_KIND, kind)
         it.setData(_IROLE_ID, item_id)
-        it.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-        self._icons.addItem(it)
+        if center:   # Icons はアイコン上・テキスト中央、List は既定（左）
+            it.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        target.addItem(it)
         return it
 
     def _populate_icons(self) -> None:
-        self._icons.clear()
+        """Icons / List の両方に、現在フォルダ直下の項目を並べる。"""
+        self._fill_flat(self._icons, center=True)
+        self._fill_flat(self._list, center=False)
+        self._update_toolbar()
+
+    def _fill_flat(self, target, *, center: bool) -> None:
+        target.clear()
         if self._library is None:
-            self._update_toolbar()
             return
         cur = self._cur_dir
 
@@ -432,9 +459,11 @@ class FilterPanel(QWidget):
             parent = str(PurePosixPath(cur).parent)
             if parent == ".":
                 parent = ""
-            up = self._add_icon_item("..", "up", parent,
-                                     self.style().standardIcon(
-                                         QStyle.StandardPixmap.SP_FileDialogToParent))
+            up = self._add_flat_item(
+                target, "..", "up", parent,
+                self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogToParent),
+                center,
+            )
             up.setToolTip("上の階層へ")
 
         # サブフォルダ（直下のみ）
@@ -443,7 +472,9 @@ class FilterPanel(QWidget):
             if p == ".":
                 p = ""
             if p == cur:
-                self._add_icon_item(rel.split("/")[-1], "folder", rel, self._dir_icon())
+                self._add_flat_item(
+                    target, rel.split("/")[-1], "folder", rel, self._dir_icon(), center
+                )
 
         # ファイル（直下のみ）
         if self._db is not None:
@@ -452,10 +483,11 @@ class FilterPanel(QWidget):
                 if p == ".":
                     p = ""
                 if p == cur:
-                    it = self._add_icon_item(clip.title, "clip", clip.id, self._clip_icon(clip))
+                    it = self._add_flat_item(
+                        target, clip.title, "clip", clip.id, self._clip_icon(clip), center
+                    )
                     if clip.missing:
                         it.setForeground(Qt.GlobalColor.gray)
-        self._update_toolbar()
 
     def _go_up(self) -> None:
         if not self._cur_dir:
@@ -476,8 +508,11 @@ class FilterPanel(QWidget):
         if current is not None and current.data(_IROLE_KIND) == "clip":
             self.clip_selected.emit(int(current.data(_IROLE_ID)))
 
-    def _on_icon_context_menu(self, pos) -> None:
-        item = self._icons.itemAt(pos)
+    def _on_flat_context_menu(self, pos) -> None:
+        lw = self.sender()               # Icons / List どちらのビューか
+        if lw is None or self._library is None:
+            return
+        item = lw.itemAt(pos)
         menu = QMenu(self)
         if item is None or item.data(_IROLE_KIND) == "up":
             # 余白／.. → 現在フォルダに対する操作
@@ -489,13 +524,13 @@ class FilterPanel(QWidget):
             self._add_folder_actions(menu, rel, str(self._library.to_abs(rel)))
         elif item.data(_IROLE_KIND) == "clip":
             cid = int(item.data(_IROLE_ID))
-            ids = [int(i.data(_IROLE_ID)) for i in self._icons.selectedItems()
+            ids = [int(i.data(_IROLE_ID)) for i in lw.selectedItems()
                    if i.data(_IROLE_KIND) == "clip"]
             if cid not in ids:
                 ids = [cid]
             self._add_clip_actions(menu, cid, ids)
         if not menu.isEmpty():
-            menu.exec(self._icons.viewport().mapToGlobal(pos))
+            menu.exec(lw.viewport().mapToGlobal(pos))
 
     # ------------------------------------------------------------------
     # タグ / 欠落でツリーを絞り込み（実フォルダはそのまま辿る）
@@ -609,6 +644,22 @@ class FilterPanel(QWidget):
         self.rebuild()
         self.library_changed.emit()
 
+    def _set_source_url(self, clip_id: int) -> None:
+        """クリップのダウンロード元 URL を設定/編集する（空で消去）。"""
+        if self._db is None:
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            return
+        url, ok = QInputDialog.getText(
+            self, "Source URL", "Download source URL:", text=clip.source_url or ""
+        )
+        if not ok:
+            return
+        self._db.update_source_url(clip_id, url.strip() or None)
+        self.library_changed.emit()
+        self.clip_selected.emit(clip_id)   # 詳細パネルを更新
+
     def _duplicate_clip(self, clip_id: int) -> None:
         try:
             self._library.duplicate_clip(self._db, clip_id)
@@ -666,7 +717,7 @@ class FilterPanel(QWidget):
     def _new_folder(self) -> None:
         if self._library is None:
             return
-        if self._stack.currentIndex() == self._ICONS:
+        if self._is_flat_mode():
             parent_rel = self._cur_dir
         else:
             kind, ident = self._selected()
@@ -719,7 +770,7 @@ class FilterPanel(QWidget):
         menu.addAction("Open file location").triggered.connect(
             lambda: self.open_location_requested.emit(self._abs(cid))
         )
-        # 再ダウンロード（上書き）— ダウンロード元 URL が記録されているときだけ
+        # 再ダウンロード／チャプター取込 — ダウンロード元 URL が記録されているときだけ
         clip = self._db.get_clip(cid) if self._db else None
         if clip is not None and clip.source_url:
             menu.addAction("Re-download (overwrite)...").triggered.connect(
@@ -728,6 +779,9 @@ class FilterPanel(QWidget):
             menu.addAction("Import YouTube chapters").triggered.connect(
                 lambda: self.import_chapters_requested.emit(cid)
             )
+        # 元 URL の設定/編集（URL の無いクリップにも後から付けられる）
+        url_label = "Edit source URL..." if (clip and clip.source_url) else "Set source URL..."
+        menu.addAction(url_label).triggered.connect(lambda: self._set_source_url(cid))
         menu.addSeparator()
         tags = self._db.list_tags() if self._db else []
         tag_menu = menu.addMenu("Tags")

@@ -306,6 +306,12 @@ class LibraryDatabase:
         )
         self._conn.commit()
 
+    def update_source_url(self, clip_id: int, source_url: str | None) -> None:
+        self._conn.execute(
+            "UPDATE clips SET source_url = ? WHERE id = ?", (source_url, clip_id)
+        )
+        self._conn.commit()
+
     def update_subtitle_path(self, clip_id: int, subtitle_path: str | None) -> None:
         self._conn.execute(
             "UPDATE clips SET subtitle_path = ? WHERE id = ?", (subtitle_path, clip_id)

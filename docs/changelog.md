@@ -2,6 +2,28 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-07-01（エクスプローラに List 表示を追加）
+
+- `ui/filter_panel.py`: 表示モードに **List** を追加（Tree / Icons / List）。List は
+  サムネイル＋項目名を横並びの行で表示する。Icons と同じフォルダ移動（現在フォルダ・
+  「..」）で、内容は `_fill_flat()` で共通化。コンテキストメニュー/選択/再生も共通。
+  表示モードは QSettings に永続化。
+
+## 2026-07-01（ffmpeg/ffprobe の UnicodeDecodeError を修正）
+
+- 症状: 日本語Windows（cp932）でチャプター取り込み時などに、UTF-8 メタデータを含む
+  動画で `UnicodeDecodeError: 'cp932' codec can't decode ...` がサブプロセスの
+  読み取りスレッドで発生。
+- `core/thumbnails.py`: ffmpeg 出力は使わないので `text=True` をやめ bytes のまま扱う。
+- `core/metadata.py`: ffprobe の JSON を `encoding="utf-8", errors="replace"` で復号。
+
+## 2026-07-01（クリップの元 URL を設定/編集）
+
+- `core/database.py`: `update_source_url()` を追加。
+- `ui/filter_panel.py`: クリップ右クリックに **「Set source URL...」/「Edit source URL...」**。
+  URL の無いクリップ（手動で取り込んだファイル等）にも後から URL を付けられ、
+  再ダウンロードやチャプター取り込みが使えるようになる（空入力で消去）。
+
 ## 2026-07-01（YouTube チャプターをブックマークに取り込み）
 
 - `core/chapters.py`: `chapters_from_info()` / `fetch_chapters()`（yt-dlp の
