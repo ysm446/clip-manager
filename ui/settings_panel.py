@@ -114,6 +114,13 @@ class SettingsPanel(QWidget):
             lambda v: setattr(self._settings, "write_subtitles", v)
         )
         form.addRow("Subtitles:", self._sub_check)
+
+        self._chapters_check = QCheckBox("Import YouTube chapters as bookmarks by default")
+        self._chapters_check.setChecked(self._settings.import_chapters)
+        self._chapters_check.toggled.connect(
+            lambda v: setattr(self._settings, "import_chapters", v)
+        )
+        form.addRow("Chapters:", self._chapters_check)
         return group
 
     def _browse(self) -> None:

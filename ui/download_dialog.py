@@ -89,6 +89,10 @@ class DownloadDialog(QDialog):
         self._subtitle_check.setChecked(self._settings.write_subtitles)
         form.addRow("Subtitles:", self._subtitle_check)
 
+        self._chapters_check = QCheckBox("Import YouTube chapters as bookmarks")
+        self._chapters_check.setChecked(self._settings.import_chapters)
+        form.addRow("Chapters:", self._chapters_check)
+
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -122,4 +126,5 @@ class DownloadDialog(QDialog):
             "codec": self._codec_combo.currentText(),
             "write_subtitles": self._subtitle_check.isChecked(),
             "save_format": self._format_combo.currentText(),
+            "import_chapters": self._chapters_check.isChecked(),
         }

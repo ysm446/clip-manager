@@ -2,6 +2,8 @@ from __future__ import annotations
 import yt_dlp
 from PySide6.QtCore import QThread, Signal
 
+from core.chapters import chapters_from_info
+
 # ---------------------------------------------------------------------------
 # Format string builder
 # ---------------------------------------------------------------------------
@@ -231,6 +233,7 @@ class DownloadWorker(QThread):
             "container": info.get("ext"),
             "filesize": info.get("filesize") or info.get("filesize_approx"),
             "subtitle_path": subtitle_path,
+            "chapters": chapters_from_info(info),
         }
 
     # ------------------------------------------------------------------

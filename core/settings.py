@@ -61,6 +61,17 @@ class AppSettings:
     def write_subtitles(self, v: bool) -> None:
         self._qs.setValue("download/write_subtitles", v)
 
+    # --- Chapters ---
+
+    @property
+    def import_chapters(self) -> bool:
+        """ダウンロード時に YouTube チャプターをブックマークへ取り込むか。"""
+        return self._qs.value("download/import_chapters", True, type=bool)
+
+    @import_chapters.setter
+    def import_chapters(self, v: bool) -> None:
+        self._qs.setValue("download/import_chapters", bool(v))
+
     # --- Playback ---
 
     @property

@@ -2,6 +2,18 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-07-01（YouTube チャプターをブックマークに取り込み）
+
+- `core/chapters.py`: `chapters_from_info()` / `fetch_chapters()`（yt-dlp の
+  チャプター情報を正規化・取得）。
+- `core/chapter_worker.py`: `ChapterImportWorker` — チャプターを marker
+  （`kind='chapter'`, `source='youtube'`）として登録し、各開始位置のサムネイルを生成。
+  再取り込み時は既存の YouTube 由来チャプターを入れ替え（重複防止）。別スレッド＋専用DB接続。
+- `core/downloader.py`: 成功ペイロードに `chapters` を追加。
+- ダウンロード導線: `DownloadDialog` / `SettingsPanel` に「Import YouTube chapters as
+  bookmarks」チェック（既定 ON、`AppSettings.import_chapters`）。DL完了後に自動取り込み。
+- 既存クリップ: クリップ右クリック **「Import YouTube chapters」**（元 URL から再取得）。
+
 ## 2026-07-01（レジューム再生が効かない不具合を修正）
 
 - 原因: ロード完了（停止状態）での `setPosition` は Media Foundation で無視されがちで、

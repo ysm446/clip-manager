@@ -20,6 +20,7 @@ from core.library import Library
 from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
 from core.enrich_worker import EnrichWorker
+from core.chapter_worker import ChapterImportWorker
 from core.download_queue import DownloadQueue, DownloadRequest
 from core.thumbnails import generate_thumbnail
 from ui.filter_panel import FilterPanel
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         self._db: LibraryDatabase | None = None  # main-thread connection
         self._scan_worker: ScanWorker | None = None
         self._enrich_worker: EnrichWorker | None = None
+        self._chapter_workers: list[ChapterImportWorker] = []
         self._playing_clip_id: int | None = None     # プレイヤーで再生中のクリップ
         # --- Download queue ---
         self._queue = DownloadQueue()
@@ -73,6 +75,7 @@ class MainWindow(QMainWindow):
         self._filter_panel.open_external_requested.connect(self._open_external)
         self._filter_panel.open_location_requested.connect(self._open_location)
         self._filter_panel.redownload_requested.connect(self._redownload_clip)
+        self._filter_panel.import_chapters_requested.connect(self._import_chapters_clip)
         self._filter_panel.open_folder_requested.connect(self._open_folder)
         self._filter_panel.download_here_requested.connect(self._open_download_dialog)
         self._filter_panel.library_changed.connect(self._update_library_status)
@@ -154,7 +157,7 @@ class MainWindow(QMainWindow):
         req = DownloadRequest(
             url=v["url"], dest_dir=v["dest_dir"], quality=v["quality"],
             codec=v["codec"], write_subtitles=v["write_subtitles"],
-            save_format=v["save_format"],
+            save_format=v["save_format"], import_chapters=v["import_chapters"],
         )
         self._queue.add(req)
         self._on_log(f"[Queue] Added: {req.url}  →  {req.dest_dir}")
@@ -202,6 +205,7 @@ class MainWindow(QMainWindow):
             save_format=v["save_format"],
             overwrite=True,
             output_stem=stem if same_format else None,
+            import_chapters=v["import_chapters"],
         )
         self._queue.add(req)
         self._on_log(f"[Queue] Re-download (overwrite): {req.url}  →  {dest_dir}")
@@ -226,10 +230,49 @@ class MainWindow(QMainWindow):
             return
         if clip_id is None:
             self._on_log("[Library] Downloaded file is outside the library — not registered.")
-        else:
-            self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
-            self._filter_panel.rebuild()   # ツリーに新ファイルを反映（開閉状態は保持）
-            self._update_library_status()
+            return
+        self._on_log(f"[Library] Registered clip #{clip_id}: {payload.get('title')}")
+        self._filter_panel.rebuild()   # ツリーに新ファイルを反映（開閉状態は保持）
+        self._update_library_status()
+        # チャプター取り込み（DL 情報にチャプターがあり、要求されていれば）
+        if getattr(request, "import_chapters", False) and payload.get("chapters"):
+            self._start_chapter_worker(clip_id, chapters=payload.get("chapters"))
+
+    @Slot(int)
+    def _import_chapters_clip(self, clip_id: int) -> None:
+        """既存クリップに、元 URL から YouTube チャプターを取り込む。"""
+        if self._db is None or self._active_lib is None:
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            return
+        if not clip.source_url:
+            QMessageBox.information(
+                self, "Import chapters",
+                "このクリップにはダウンロード元 URL が記録されていないため取り込めません。",
+            )
+            return
+        self._start_chapter_worker(clip_id, url=clip.source_url)
+
+    def _start_chapter_worker(
+        self, clip_id: int, *, url: str | None = None, chapters: list | None = None
+    ) -> None:
+        if self._active_lib is None:
+            return
+        worker = ChapterImportWorker(
+            str(self._active_lib.root), self._active_lib.name, clip_id,
+            url=url, chapters=chapters,
+        )
+        worker.log_message.connect(self._on_log)
+        worker.finished_import.connect(self._on_chapters_imported)
+        self._chapter_workers.append(worker)
+        worker.start()
+
+    @Slot(int, int)
+    def _on_chapters_imported(self, clip_id: int, count: int) -> None:
+        self._chapter_workers = [w for w in self._chapter_workers if w.isRunning()]
+        if count and clip_id == self._playing_clip_id:
+            self._reload_markers()   # 再生中クリップなら一覧を即更新
 
     # ------------------------------------------------------------------
     # Settings
@@ -603,6 +646,9 @@ class MainWindow(QMainWindow):
         if self._enrich_worker and self._enrich_worker.isRunning():
             self._enrich_worker.cancel()
             self._enrich_worker.wait(3000)
+        for w in self._chapter_workers:
+            if w.isRunning():
+                w.wait(5000)
         if self._db is not None:
             self._db.close()
             self._db = None

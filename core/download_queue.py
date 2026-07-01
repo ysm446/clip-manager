@@ -39,6 +39,7 @@ class DownloadRequest:
     message: str = ""
     overwrite: bool = False          # 既存ファイルを上書きする（--force-overwrites）
     output_stem: str | None = None   # 出力名（拡張子なし）を固定。再DL時に同名へ上書き
+    import_chapters: bool = False    # 完了後 YouTube チャプターをマーカーに取り込む
 
     def is_finished(self) -> bool:
         return self.status in _FINISHED_STATES

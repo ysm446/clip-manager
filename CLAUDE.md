@@ -43,6 +43,8 @@ core/
   enrich_worker.py       # EnrichWorker(QThread) — メタ補完＋サムネイル生成
   download_queue.py      # DownloadQueue(順次) + DownloadRequest。worker_factory 注入可
   subtitles.py           # parse_srt()/cue_at() — 外部 .srt パーサ（純関数）
+  chapters.py            # chapters_from_info()/fetch_chapters() — YouTube チャプター
+  chapter_worker.py      # ChapterImportWorker(QThread) — チャプターをマーカーに取込
 ui/
   main_window.py         # MainWindow — Library/Queue のタブ
   filter_panel.py        # FilterPanel — エクスプローラ（唯一のブラウザ）。実フォルダ＋

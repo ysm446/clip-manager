@@ -124,6 +124,7 @@ class FilterPanel(QWidget):
     open_external_requested = Signal(str)    # クリップ（絶対パス）
     open_location_requested = Signal(str)    # クリップ（絶対パス）
     redownload_requested = Signal(int)       # クリップ（再ダウンロードして上書き）
+    import_chapters_requested = Signal(int)  # クリップ（YouTube チャプター取り込み）
     library_changed = Signal()               # 構成が変わった
 
     _EXPANDED_KEY = "ui/expanded_folders"
@@ -723,6 +724,9 @@ class FilterPanel(QWidget):
         if clip is not None and clip.source_url:
             menu.addAction("Re-download (overwrite)...").triggered.connect(
                 lambda: self.redownload_requested.emit(cid)
+            )
+            menu.addAction("Import YouTube chapters").triggered.connect(
+                lambda: self.import_chapters_requested.emit(cid)
             )
         menu.addSeparator()
         tags = self._db.list_tags() if self._db else []
