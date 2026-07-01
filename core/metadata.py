@@ -38,9 +38,11 @@ def probe(path: str | Path, ffprobe: str | None = None) -> dict | None:
         "-show_format", "-show_streams", str(path),
     ]
     try:
+        # ffprobe の JSON は UTF-8。Windows 既定（cp932）で復号すると
+        # 非ASCIIメタデータで UnicodeDecodeError になるため明示指定する。
         out = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
-            creationflags=_NO_WINDOW,
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, creationflags=_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return None

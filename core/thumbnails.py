@@ -59,8 +59,11 @@ def generate_thumbnail(
         "-q:v", str(quality), str(out_path),
     ]
     try:
+        # 出力（stderr）は使わないのでデコードしない（bytes のまま）。
+        # text=True にすると Windows 既定の cp932 で復号を試み、UTF-8 の
+        # メタデータで UnicodeDecodeError になるため。
         res = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
+            cmd, capture_output=True, timeout=60,
             creationflags=_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
