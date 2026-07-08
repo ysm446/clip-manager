@@ -125,6 +125,7 @@ class FilterPanel(QWidget):
     open_location_requested = Signal(str)    # クリップ（絶対パス）
     redownload_requested = Signal(int)       # クリップ（再ダウンロードして上書き）
     import_chapters_requested = Signal(int)  # クリップ（YouTube チャプター取り込み）
+    export_audio_requested = Signal(int)     # クリップ（音声を MP3 で書き出し）
     library_changed = Signal()               # 構成が変わった
 
     _EXPANDED_KEY = "ui/expanded_folders"
@@ -769,6 +770,9 @@ class FilterPanel(QWidget):
         )
         menu.addAction("Open file location").triggered.connect(
             lambda: self.open_location_requested.emit(self._abs(cid))
+        )
+        menu.addAction("Export audio (MP3)...").triggered.connect(
+            lambda: self.export_audio_requested.emit(cid)
         )
         # 再ダウンロード／チャプター取込 — ダウンロード元 URL が記録されているときだけ
         clip = self._db.get_clip(cid) if self._db else None

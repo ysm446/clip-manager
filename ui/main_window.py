@@ -21,8 +21,10 @@ from core.database import LibraryDatabase
 from core.scan_worker import ScanWorker
 from core.enrich_worker import EnrichWorker
 from core.chapter_worker import ChapterImportWorker
+from core.audio_export_worker import AudioExportWorker
 from core.download_queue import DownloadQueue, DownloadRequest
 from core.thumbnails import generate_thumbnail
+from core.audio_export import ffmpeg_path
 from ui.filter_panel import FilterPanel
 from ui.queue_view import QueueView
 from ui.player_widget import PlayerWidget, _fmt_ms, _fmt_pos_for_filename
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         self._scan_worker: ScanWorker | None = None
         self._enrich_worker: EnrichWorker | None = None
         self._chapter_workers: list[ChapterImportWorker] = []
+        self._audio_workers: list[AudioExportWorker] = []
         self._playing_clip_id: int | None = None     # プレイヤーで再生中のクリップ
         # --- Download queue ---
         self._queue = DownloadQueue()
@@ -76,6 +79,7 @@ class MainWindow(QMainWindow):
         self._filter_panel.open_location_requested.connect(self._open_location)
         self._filter_panel.redownload_requested.connect(self._redownload_clip)
         self._filter_panel.import_chapters_requested.connect(self._import_chapters_clip)
+        self._filter_panel.export_audio_requested.connect(self._export_audio_clip)
         self._filter_panel.open_folder_requested.connect(self._open_folder)
         self._filter_panel.download_here_requested.connect(self._open_download_dialog)
         self._filter_panel.library_changed.connect(self._update_library_status)
@@ -273,6 +277,74 @@ class MainWindow(QMainWindow):
         self._chapter_workers = [w for w in self._chapter_workers if w.isRunning()]
         if count and clip_id == self._playing_clip_id:
             self._reload_markers()   # 再生中クリップなら一覧を即更新
+
+    # ------------------------------------------------------------------
+    # 音声書き出し（MP3）
+    # ------------------------------------------------------------------
+
+    @Slot(int)
+    def _export_audio_clip(self, clip_id: int) -> None:
+        """クリップの音声を MP3 で書き出す（保存先はダイアログで確認）。"""
+        if self._db is None or self._active_lib is None:
+            return
+        if ffmpeg_path() is None:
+            QMessageBox.warning(
+                self, "Export audio",
+                "ffmpeg が見つからないため音声を書き出せません。",
+            )
+            return
+        clip = self._db.get_clip(clip_id)
+        if clip is None:
+            return
+        src = Path(self._active_lib.to_abs(clip.rel_path))
+        if not src.is_file():
+            QMessageBox.warning(
+                self, "Export audio",
+                f"元ファイルが見つかりません:\n{src}",
+            )
+            return
+        default_out = self._unique_path(src.with_suffix(".mp3"))
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Export audio (MP3)", str(default_out), "MP3 audio (*.mp3)"
+        )
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".mp3"):
+            out_path += ".mp3"
+        worker = AudioExportWorker(str(src), out_path)
+        worker.log_message.connect(self._on_log)
+        worker.finished_export.connect(self._on_audio_exported)
+        self._audio_workers.append(worker)
+        self._on_log(f"[Audio] Exporting {src.name} → {Path(out_path).name} ...")
+        self.statusBar().showMessage(f"Exporting audio: {Path(out_path).name} ...")
+        worker.start()
+
+    @Slot(bool, str)
+    def _on_audio_exported(self, ok: bool, out_path: str) -> None:
+        self._audio_workers = [w for w in self._audio_workers if w.isRunning()]
+        name = Path(out_path).name
+        if ok:
+            self.statusBar().showMessage(f"Audio exported: {name}", 5000)
+            # ライブラリ内に保存されたなら再スキャンして登録する
+            if self._active_lib is not None and self._within_library(out_path):
+                if not (self._scan_worker and self._scan_worker.isRunning()):
+                    self._start_scan_worker()
+        else:
+            self.statusBar().showMessage("Audio export failed", 5000)
+            QMessageBox.warning(
+                self, "Export audio",
+                f"音声の書き出しに失敗しました: {name}\n"
+                "（音声トラックが無い、または ffmpeg のエラーの可能性があります）",
+            )
+
+    def _within_library(self, path: str) -> bool:
+        if self._active_lib is None:
+            return False
+        try:
+            Path(path).resolve().relative_to(Path(self._active_lib.root).resolve())
+            return True
+        except ValueError:
+            return False
 
     # ------------------------------------------------------------------
     # Settings
@@ -647,6 +719,9 @@ class MainWindow(QMainWindow):
             self._enrich_worker.cancel()
             self._enrich_worker.wait(3000)
         for w in self._chapter_workers:
+            if w.isRunning():
+                w.wait(5000)
+        for w in self._audio_workers:
             if w.isRunning():
                 w.wait(5000)
         if self._db is not None:
