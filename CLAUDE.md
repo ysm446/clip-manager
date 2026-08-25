@@ -45,6 +45,10 @@ core/
   subtitles.py           # parse_srt()/cue_at() — 外部 .srt パーサ（純関数）
   chapters.py            # chapters_from_info()/fetch_chapters() — YouTube チャプター
   chapter_worker.py      # ChapterImportWorker(QThread) — チャプターをマーカーに取込
+  audio_export.py        # extract_audio_mp3() — ffmpeg で音声のみ MP3 化（純関数）
+  audio_export_worker.py # AudioExportWorker(QThread) — MP3 書き出しを別スレッドで実行
+  ytdlp_updater.py       # yt-dlp のバージョン確認・pip 更新（純関数）
+  ytdlp_update_worker.py # YtdlpCheckWorker/YtdlpUpdateWorker(QThread)
 ui/
   main_window.py         # MainWindow — Library/Queue のタブ
   filter_panel.py        # FilterPanel — エクスプローラ（唯一のブラウザ）。実フォルダ＋
@@ -56,7 +60,8 @@ ui/
   download_dialog.py     # DownloadDialog — 「ここにダウンロード」ポップアップ
   queue_view.py          # QueueView — ダウンロードキューの進捗一覧
   library_view.py        # （現在は未使用。fmt_* ヘルパ＋将来のサムネイル一覧用に残置）
-  settings_panel.py      # SettingsPanel — Settings タブ（再生/ダウンロード設定・即時反映）
+  settings_panel.py      # SettingsPanel — Settings タブ（再生/ダウンロード設定・即時反映・
+                         #   yt-dlp の更新確認/更新ボタン）
 ```
 
 Library タブのレイアウトは `QSplitter[ FilterPanel | QSplitter(PlayerWidget / ClipDetailsPanel) ]`

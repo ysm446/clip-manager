@@ -17,6 +17,14 @@
 
 ## 完了済み
 
+- 2026-08-26: **yt-dlp 更新ボタン**（Settings タブ）。バージョン表示・更新確認・
+  pip 更新（`core/ytdlp_updater.py` / `core/ytdlp_update_worker.py`）。yt-dlp を
+  2026.8.19 へ更新し YouTube の 403 失敗を解消。
+
+- 2026-07-08: **音声のみ MP3 書き出し**。クリップ右クリック「Export audio (MP3)...」
+  （`core/audio_export.py` / `core/audio_export_worker.py`、QThread 実行、
+  ライブラリ内保存なら再スキャンで自動登録）。
+
 - 2026-06-28: **Phase 6 完了（仕上げ）**。
   - エクスプローラに**空状態の案内**（ライブラリ未選択／クリップ0件のヒント）。
   - `ScanWorker`/`EnrichWorker` に例外処理を追加（失敗で UI を止めない）。

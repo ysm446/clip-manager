@@ -2,6 +2,38 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-08-26（Settings タブに yt-dlp の更新ボタンを追加）
+
+- `core/ytdlp_updater.py`: `installed_version()` / `latest_version()`（PyPI JSON）/
+  `is_newer()` / `update()`（`sys.executable -m pip install -U yt-dlp`）。Qt 非依存。
+- `core/ytdlp_update_worker.py`: `YtdlpCheckWorker` / `YtdlpUpdateWorker`（QThread）。
+- `ui/settings_panel.py`: 「yt-dlp」グループを追加。インストール済みバージョン表示、
+  **Check for updates**（最新版と比較）、**Update**（pip で更新。完了後は再起動を案内）。
+  処理中はボタンを無効化。`wait_workers()` を `MainWindow.closeEvent` から呼ぶ。
+- 更新は `.venv` 内で行われ、反映にはアプリの再起動が必要（import 済みモジュールは
+  差し替えない）。
+
+## 2026-08-26（yt-dlp を 2026.8.19 に更新）
+
+- 症状: YouTube のダウンロードが動画本体の途中で `HTTP Error 403: Forbidden` になり
+  失敗する（字幕だけは取得できる）。yt-dlp 2026.6.9 が YouTube 側の変更に追従できて
+  いなかったのが原因。
+- `requirements.txt`: `yt-dlp==2026.8.19` に更新（`.venv` も更新済み）。
+- YouTube は頻繁に仕様が変わるため、DL が突然失敗し始めたらまず
+  `.venv\Scripts\python -m pip install -U yt-dlp` を試す。
+
+## 2026-07-08（動画から音声のみを MP3 で書き出し）
+
+- `core/audio_export.py`: `extract_audio_mp3()` — ffmpeg で映像を捨て（`-vn`）
+  libmp3lame で MP3 化する純関数（既定 192k）。ffmpeg が無い/失敗時は False。
+  出力は bytes のまま扱い cp932 の復号エラーを避ける。
+- `core/audio_export_worker.py`: `AudioExportWorker(QThread)` — 長尺でも UI を
+  ブロックしないよう別スレッドで実行し、`finished_export(ok, out_path)` を emit。
+- `ui/filter_panel.py`: クリップ右クリックに **「Export audio (MP3)...」**。
+- `ui/main_window.py`: 保存先を `QFileDialog` で確認（既定は同名 `.mp3`、重複時は連番）。
+  保存先がライブラリ内なら再スキャンで自動登録。ffmpeg 不在・元ファイル欠落・失敗時は警告。
+  終了時は実行中ワーカーを `wait()`。
+
 ## 2026-07-01（エクスプローラに List 表示を追加）
 
 - `ui/filter_panel.py`: 表示モードに **List** を追加（Tree / Icons / List）。List は

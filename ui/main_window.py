@@ -724,6 +724,7 @@ class MainWindow(QMainWindow):
         for w in self._audio_workers:
             if w.isRunning():
                 w.wait(5000)
+        self._settings_panel.wait_workers()
         if self._db is not None:
             self._db.close()
             self._db = None
