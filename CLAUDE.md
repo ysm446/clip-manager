@@ -62,6 +62,8 @@ ui/
   library_view.py        # （現在は未使用。fmt_* ヘルパ＋将来のサムネイル一覧用に残置）
   settings_panel.py      # SettingsPanel — Settings タブ（再生/ダウンロード設定・即時反映・
                          #   yt-dlp の更新確認/更新ボタン）
+  toast.py               # Toast/ToastManager — 右下に出るクリック可能な通知
+  reveal.py              # reveal_in_file_manager() — エクスプローラでファイルを選択表示
 ```
 
 Library タブのレイアウトは `QSplitter[ FilterPanel | QSplitter(PlayerWidget / ClipDetailsPanel) ]`

@@ -2,6 +2,22 @@
 
 新しいものを上に記載する。日付は `YYYY-MM-DD`。
 
+## 2026-09-05（スクリーンショット保存時に右下トースト通知）
+
+- `ui/toast.py`: `Toast` / `ToastManager` — ホストウィジェット（MainWindow）の**右下**に
+  積み上げ表示する通知。サムネイル＋見出し＋本文、× で閉じる、8 秒でフェードアウト
+  （ホバー中は消えない）、最大 3 件。クリックで `clicked` を emit。
+- `ui/reveal.py`: `reveal_in_file_manager()` — Windows は `explorer /select,<file>` で
+  **ファイルを選択した状態**でフォルダを開く。他 OS / 失敗時は親フォルダを
+  `QDesktopServices` で開く。
+  - 注意: 引数をリストで渡すと、パスに空白があるとき `subprocess` が
+    `"/select,C:\...\my clip.jpg"` のようにスイッチごと引用符で括ってしまい、
+    explorer がスイッチを認識できずに**ドキュメントフォルダ**を開いてしまう。
+    そのためコマンドラインを文字列で組み、引用符はパスだけに付ける
+    （exe も `%SystemRoot%\explorer.exe` のフルパスで指定）。
+- `ui/main_window.py`: F12 のスクリーンショット保存後にトーストを表示し、**クリックで
+  保存先フォルダを開く**（保存した画像が選択された状態）。失敗時は赤いトーストで通知。
+
 ## 2026-08-26（Settings タブに yt-dlp の更新ボタンを追加）
 
 - `core/ytdlp_updater.py`: `installed_version()` / `latest_version()`（PyPI JSON）/

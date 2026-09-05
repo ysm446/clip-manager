@@ -31,6 +31,8 @@ from ui.player_widget import PlayerWidget, _fmt_ms, _fmt_pos_for_filename
 from ui.clip_details import ClipDetailsPanel
 from ui.download_dialog import DownloadDialog
 from ui.settings_panel import SettingsPanel
+from ui.toast import ToastManager
+from ui.reveal import reveal_in_file_manager
 
 
 class MainWindow(QMainWindow):
@@ -51,6 +53,7 @@ class MainWindow(QMainWindow):
         self._queue.download_succeeded.connect(self._on_download_succeeded)
         self._queue.queue_idle.connect(self._auto_rescan)
         self._init_ui()
+        self._toasts = ToastManager(self)
         self._load_active_library()
         self._restore_geometry()
         self.setWindowTitle("Clip Manager")
@@ -618,10 +621,21 @@ class MainWindow(QMainWindow):
         )
         if ok:
             self._player.show_status(f"スクリーンショットを保存: {out.name}")
+            self._toasts.show_toast(
+                "スクリーンショットを保存しました",
+                f"{out.name}\nクリックでフォルダを開く",
+                thumbnail=out,
+                on_click=lambda p=out: reveal_in_file_manager(p),
+            )
             self._on_log(f"[Screenshot] saved {out}")
         else:
             self._player.show_status(
                 "スクリーンショットの保存に失敗しました（ffmpeg を確認）", error=True
+            )
+            self._toasts.show_toast(
+                "スクリーンショットの保存に失敗しました",
+                "ffmpeg が使えるか確認してください",
+                error=True,
             )
             self._on_log("[Screenshot] failed (ffmpeg unavailable or error)")
 
